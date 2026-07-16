@@ -1,0 +1,6 @@
+{
+  "name": "Pro Studio Dubbing",
+  "description": "A premium, production-grade AI video translation, voice cloning, and deep dubbing suite.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
