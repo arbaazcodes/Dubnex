@@ -1,3 +1,4 @@
+from services.pipeline_service import process_video
 from fastapi import FastAPI, UploadFile, File
 import tempfile
 import shutil
@@ -6,6 +7,7 @@ from services.translator_service import translate_text
 
 from services.whisper_service import detect_language, transcribe_audio
 from services.ffmpeg_service import extract_audio
+
 
 from jobs.job_manager import (
     create_job,
@@ -106,3 +108,23 @@ async def translate(
 def job_status(job_id: str):
 
     return get_job(job_id)
+
+
+@app.post("/process-video")
+async def process_video_api(
+    target_lang: str,
+    file: UploadFile = File(...)
+):
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
+        shutil.copyfileobj(file.file, temp)
+        video_path = temp.name
+
+    result = process_video(
+        video_path,
+        target_lang
+    )
+
+    os.remove(video_path)
+
+    return result

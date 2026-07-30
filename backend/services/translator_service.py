@@ -1,12 +1,43 @@
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import torch
 
 MODEL_NAME = "facebook/nllb-200-distilled-600M"
+
+print("Loading Translation Model...")
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
 
+if torch.cuda.is_available():
+    model = model.to("cuda")
+    DEVICE = "cuda"
+else:
+    DEVICE = "cpu"
+
+print(f"Translation Model Loaded ({DEVICE})")
+
 
 LANGUAGE_CODES = {
+    "en": "eng_Latn",
+    "hi": "hin_Deva",
+    "ur": "urd_Arab",
+    "ar": "arb_Arab",
+    "fr": "fra_Latn",
+    "de": "deu_Latn",
+    "es": "spa_Latn",
+    "it": "ita_Latn",
+    "pt": "por_Latn",
+    "ru": "rus_Cyrl",
+    "ja": "jpn_Jpan",
+    "ko": "kor_Hang",
+    "zh": "zho_Hans",
+    "tr": "tur_Latn",
+    "ta": "tam_Taml",
+    "te": "tel_Telu",
+    "pa": "pan_Guru",
+    "gu": "guj_Gujr",
+    "ml": "mal_Mlym",
+
     "english": "eng_Latn",
     "hindi": "hin_Deva",
     "urdu": "urd_Arab",
@@ -25,28 +56,44 @@ LANGUAGE_CODES = {
     "telugu": "tel_Telu",
     "punjabi": "pan_Guru",
     "gujarati": "guj_Gujr",
-    "malayalam": "mal_Mlym"
+    "malayalam": "mal_Mlym",
 }
 
 
-def translate_text(text, source_language, target_language):
+def translate_text(text: str, source_language: str, target_language: str):
 
-    source = LANGUAGE_CODES[source_language.lower()]
-    target = LANGUAGE_CODES[target_language.lower()]
+    source_language = source_language.lower().strip()
+    target_language = target_language.lower().strip()
 
-    tokenizer.src_lang = source
+    if source_language not in LANGUAGE_CODES:
+        raise ValueError(f"Unsupported source language: {source_language}")
 
-    encoded = tokenizer(text, return_tensors="pt")
+    if target_language not in LANGUAGE_CODES:
+        raise ValueError(f"Unsupported target language: {target_language}")
+
+    tokenizer.src_lang = LANGUAGE_CODES[source_language]
+
+    inputs = tokenizer(text, return_tensors="pt")
+
+    if DEVICE == "cuda":
+        inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
     generated_tokens = model.generate(
-        **encoded,
-        forced_bos_token_id=tokenizer.convert_tokens_to_ids(target),
-        max_length=1024
+        **inputs,
+        forced_bos_token_id=tokenizer.convert_tokens_to_ids(
+    LANGUAGE_CODES[target_language]
+),
+        max_new_tokens=256,
     )
 
     translated = tokenizer.batch_decode(
         generated_tokens,
-        skip_special_tokens=True
+        skip_special_tokens=True,
     )[0]
+
+    print("=" * 50)
+    print("Input :", text)
+    print("Output:", translated)
+    print("=" * 50)
 
     return translated
