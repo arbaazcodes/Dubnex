@@ -1,10 +1,12 @@
+from services.tts_service import generate_speech
+from fastapi.responses import FileResponse
 from services.pipeline_service import process_video
 from fastapi import FastAPI, UploadFile, File
 import tempfile
 import shutil
 import os
 from services.translator_service import translate_text
-
+from services.video_renderer_service import replace_audio
 from services.whisper_service import detect_language, transcribe_audio
 from services.ffmpeg_service import extract_audio
 
@@ -109,6 +111,14 @@ def job_status(job_id: str):
 
     return get_job(job_id)
 
+@app.post("/generate-audio")
+async def generate_audio(text: str):
+    filepath = await generate_speech(text)
+    return FileResponse(
+        filepath,
+        media_type="audio/mpeg",
+        filename="translated.mp3"
+    )
 
 @app.post("/process-video")
 async def process_video_api(
@@ -126,3 +136,33 @@ async def process_video_api(
     finally:
         if os.path.exists(video_path):
             os.remove(video_path)
+
+@app.post("/render-video")
+async def render_video(
+    video: UploadFile = File(...),
+    audio: UploadFile = File(...)
+):
+    import os
+    import shutil
+    import uuid
+
+    temp_dir = "temp"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    video_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{video.filename}")
+    audio_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{audio.filename}")
+
+    with open(video_path, "wb") as buffer:
+        shutil.copyfileobj(video.file, buffer)
+
+    with open(audio_path, "wb") as buffer:
+        shutil.copyfileobj(audio.file, buffer)
+
+    output_video = replace_audio(video_path, audio_path)
+
+    return FileResponse(
+        output_video,
+        media_type="video/mp4",
+        filename="translated_video.mp4"
+    )
+    

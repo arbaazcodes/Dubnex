@@ -2,9 +2,9 @@ from faster_whisper import WhisperModel
 
 model = WhisperModel(
     "large-v3",
-    device="cpu",
-    compute_type="int8"
-),
+    device="cuda",
+    compute_type="float16"
+)
 
 def detect_language(audio_path):
 
