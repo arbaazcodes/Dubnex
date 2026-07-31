@@ -115,16 +115,14 @@ async def process_video_api(
     target_lang: str,
     file: UploadFile = File(...)
 ):
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
         shutil.copyfileobj(file.file, temp)
         video_path = temp.name
 
-    result = process_video(
-        video_path,
-        target_lang
-    )
+    try:
+        result = process_video(video_path, target_lang)
+        return result
 
-    os.remove(video_path)
-
-    return result
+    finally:
+        if os.path.exists(video_path):
+            os.remove(video_path)
