@@ -97,3 +97,33 @@ def translate_text(text: str, source_language: str, target_language: str):
     print("=" * 50)
 
     return translated
+
+def translate_segments(
+    segments: list,
+    source_language: str,
+    target_language: str
+):
+    """
+    Translate Whisper segments one by one while preserving timing.
+    """
+
+    translated_segments = []
+
+    for segment in segments:
+
+        translated_text = translate_text(
+            text=segment["text"],
+            source_language=source_language,
+            target_language=target_language
+        )
+
+        translated_segments.append({
+            "id": segment["id"],
+            "start": segment["start"],
+            "end": segment["end"],
+            "duration": segment["duration"],
+            "original": segment["text"],
+            "translated": translated_text
+        })
+
+    return translated_segments

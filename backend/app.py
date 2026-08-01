@@ -9,7 +9,10 @@ from services.translator_service import translate_text
 from services.video_renderer_service import replace_audio
 from services.whisper_service import detect_language, transcribe_audio
 from services.ffmpeg_service import extract_audio
-
+from fastapi.responses import FileResponse
+from services.elevenlabs_service import get_all_voices
+from fastapi.responses import FileResponse
+from services.elevenlabs_service import generate_speech
 
 from jobs.job_manager import (
     create_job,
@@ -123,6 +126,7 @@ async def generate_audio(text: str):
 @app.post("/process-video")
 async def process_video_api(
     target_lang: str,
+    voice: str = "george",
     file: UploadFile = File(...)
 ):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
@@ -130,12 +134,42 @@ async def process_video_api(
         video_path = temp.name
 
     try:
-        result = process_video(video_path, target_lang)
-        return result
+        result = await process_video(
+    video_path=video_path,
+    target_language=target_lang,
+    voice=voice,
+)
+
+        return FileResponse(
+    path=result["output_video"],
+    media_type="video/mp4",
+    filename="translated_video.mp4"
+)
 
     finally:
         if os.path.exists(video_path):
             os.remove(video_path)
+
+
+@app.get("/voices")
+def voices():
+    return {
+        "voices": get_all_voices()
+    }
+
+@app.get("/eleven-test")
+def eleven_test():
+
+    filepath = generate_speech(
+        text="Hello Arbaaz. This is ElevenLabs speaking.",
+        filename="eleven_test.mp3"
+    )
+
+    return FileResponse(
+        path=filepath,
+        media_type="audio/mpeg",
+        filename="eleven_test.mp3"
+    )
 
 @app.post("/render-video")
 async def render_video(
@@ -164,5 +198,4 @@ async def render_video(
         output_video,
         media_type="video/mp4",
         filename="translated_video.mp4"
-    )
-    
+    ),
