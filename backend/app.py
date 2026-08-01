@@ -14,11 +14,12 @@ from services.elevenlabs_service import get_all_voices
 from fastapi.responses import FileResponse
 from services.elevenlabs_service import generate_speech
 
-from jobs.job_manager import (
+from services.job_service import (
     create_job,
     update_job,
     finish_job,
-    get_job
+    fail_job,
+    get_job,
 )
 
 app = FastAPI(
@@ -40,7 +41,8 @@ def new_job():
     job_id = create_job()
 
     return {
-        "job_id": job_id
+        "job_id": job_id,
+        "status": "created"
     }
 
 @app.post("/detect-language")
