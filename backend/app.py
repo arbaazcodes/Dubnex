@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse
 from services.elevenlabs_service import get_all_voices
 from fastapi.responses import FileResponse
 from services.elevenlabs_service import generate_speech
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from services.job_service import (
     create_job,
@@ -23,10 +25,15 @@ from services.job_service import (
 )
 
 app = FastAPI(
+    
     title="LuminaDub Backend",
     version="1.0.0"
 )
-
+app.mount(
+    "/outputs",
+    StaticFiles(directory="outputs"),
+    name="outputs",
+)
 
 @app.get("/")
 def home():
@@ -142,10 +149,14 @@ async def process_video_api(
     voice=voice,
 )
 
-        return FileResponse(
-    path=result["output_video"],
-    media_type="video/mp4",
-    filename="translated_video.mp4"
+        return JSONResponse(
+    {
+        "success": True,
+        "output_video": result["output_video"],
+        "language": result["language"],
+        "original_text": result["original_text"],
+        "translated_text": result["translated_text"],
+    }
 )
 
     finally:

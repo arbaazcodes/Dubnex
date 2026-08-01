@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -35,6 +36,7 @@ import {
 import { Project, VoiceSettings, TTSVoiceEngine } from './types';
 import { targetLanguages, voicePresets } from './data';
 import { saveUserProject, loadUserProjects, loginWithGoogleMock, AuthUser, isRealFirebase } from './lib/firebase';
+import { translateVideo } from './services/videoApi';
 
 export default function App() {
   // Navigation & Core States
@@ -71,6 +73,8 @@ export default function App() {
     thumbnailUrl: string;
     url: string;
   } | null>(null);
+
+const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Advanced Configurations (Inside Settings Drawer)
   const [activeEngine, setActiveEngine] = useState<TTSVoiceEngine>('ElevenLabs');
@@ -248,6 +252,9 @@ export default function App() {
 
   // Video local file processing
   const handleProcessFile = async (file: File) => {
+    console.log("📁 File Selected:", file);
+    setSelectedFile(file);
+    console.log("✅ selectedFile saved");
     setUploadError(null);
     setVideoMetadata(null);
     setVideoUrlInput('');
@@ -467,56 +474,28 @@ export default function App() {
   };
 
   // Trigger Translation
-  const handleStartDubbing = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!videoMetadata) return;
+ const handleStartDubbing = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    setUploadProgress(10);
-    setUploadingState('Uploading video frame blocks...');
-    setAppState('processing');
 
-    try {
-      for (let p = 15; p <= 100; p += 15) {
-        await new Promise(r => setTimeout(r, 150));
-        setUploadProgress(Math.min(100, p));
-        setUploadingState(`Uploading Video track... ${Math.min(100, p)}%`);
-      }
+  if (!videoMetadata) {
+    return;
+  }
 
-      setUploadingState('Spinning up FastAPI container adapters...');
+  if (!selectedFile) {
+    return;
+  }
 
-      const res = await fetch('/api/start-pipeline', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: videoMetadata.name,
-          url: videoMetadata.url,
-          metadata: {
-            fileName: videoMetadata.name,
-            fileSize: videoMetadata.size,
-            duration: videoMetadata.duration,
-            resolution: videoMetadata.resolution,
-            fps: videoMetadata.fps
-          },
-          targetLanguage: targetLanguages.find(t => t.code === targetLanguageInput)?.name || 'Spanish',
-          sourceLanguage: detectedLanguage || 'English'
-        })
-      });
+  console.log("📤 About to call translateVideo()");
 
-      const data = await res.json();
-      if (!res.ok || !data.jobId) {
-        throw new Error(data.error || 'Pipeline trigger failed.');
-      }
+const result = await translateVideo(
+    selectedFile,
+    targetLanguageInput,
+    "george"
+);
 
-      setSelectedProjectId(data.jobId);
-      startSSEListener(data.jobId);
-
-    } catch (err: any) {
-      console.error(err);
-      setAppState('upload');
-      setUploadError(err.message || 'Unable to establish server-side video pipelines.');
-    }
-  };
-
+console.log("📥 translateVideo finished", result);
+};
   // Reset core workflow
   const handleResetWorkflow = () => {
     setVideoMetadata(null);
