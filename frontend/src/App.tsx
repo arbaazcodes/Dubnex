@@ -34,9 +34,9 @@ import {
 } from 'lucide-react';
 
 import { Project, VoiceSettings, TTSVoiceEngine } from './types';
-import { targetLanguages, voicePresets } from './data';
+import { targetLanguages, voicePresets } from './constants/data';
 import { saveUserProject, loadUserProjects, loginWithGoogleMock, AuthUser, isRealFirebase } from './lib/firebase';
-import { translateVideo } from './services/videoApi';
+import { translateVideo } from './services/api';
 
 export default function App() {
   // Navigation & Core States
@@ -233,7 +233,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     setDetectionConfidence(null);
     
     try {
-      const response = await fetch('/api/detect-language', {
+      const response = await fetch('http://127.0.0.1:8000/api/detect-language', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: fileName })
@@ -412,7 +412,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // SSE job link
   const startSSEListener = (jobId: string) => {
-    const eventSource = new EventSource(`/api/pipeline-sse?jobId=${jobId}`);
+    const eventSource = new EventSource(`http://127.0.0.1:8000/api/pipeline-sse?jobId=${jobId}`);
     
     eventSource.onmessage = (event) => {
       try {
@@ -527,7 +527,7 @@ console.log("📥 translateVideo finished", result);
         sysInstruction = "You are Pro Studio Dubbing's XTTS Voice Coach. Give advice on speed, pitch, emotion, and accent alignment rules.";
       }
 
-      const res = await fetch('/api/chat', {
+      const res = await fetch('http://127.0.0.1:8000/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -554,7 +554,7 @@ console.log("📥 translateVideo finished", result);
     setAnalysisLoading(true);
     setVideoAnalysis(null);
     try {
-      const res = await fetch('/api/analyze-video', {
+      const res = await fetch('http://127.0.0.1:8000/api/analyze-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -621,18 +621,27 @@ console.log("📥 translateVideo finished", result);
     if (!audioBlob) return;
     setTranscribing(true);
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      reader.onloadend = async () => {
-        const base64data = (reader.result as string).split(',')[1];
-        const res = await fetch('/api/transcribe-audio', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ audio: base64data, mimeType: 'audio/webm' })
-        });
-        const data = await res.json();
-        setTranscribedText(data.text || "No speech detected.");
-      };
+      const base64data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string | null;
+          if (result) {
+            resolve(result.split(',')[1]);
+          } else {
+            reject(new Error('Failed to read audio blob.'));
+          }
+        };
+        reader.onerror = () => reject(new Error('Failed to read audio blob.'));
+        reader.readAsDataURL(audioBlob);
+      });
+
+      const res = await fetch('http://127.0.0.1:8000/api/transcribe-audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio: base64data, mimeType: 'audio/webm' })
+      });
+      const data = await res.json();
+      setTranscribedText(data.text || "No speech detected.");
     } catch (e) {
       console.error("Transcribe failed", e);
     } finally {
@@ -658,7 +667,7 @@ console.log("📥 translateVideo finished", result);
       setLiveCaptions([]);
       try {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${wsProtocol}//${window.location.host}/live`);
+        const ws = new WebSocket(`${wsProtocol}//127.0.0.1:8000/live`);
         liveWsRef.current = ws;
 
         ws.onopen = () => {

@@ -1,7 +1,6 @@
 from services.tts_service import generate_speech
-from fastapi.responses import FileResponse
 from services.pipeline_service import process_video
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Body
 import tempfile
 import shutil
 import os
@@ -9,12 +8,11 @@ from services.translator_service import translate_text
 from services.video_renderer_service import replace_audio
 from services.whisper_service import detect_language, transcribe_audio
 from services.ffmpeg_service import extract_audio
-from fastapi.responses import FileResponse
-from services.elevenlabs_service import get_all_voices
-from fastapi.responses import FileResponse
-from services.elevenlabs_service import generate_speech
-from fastapi.responses import JSONResponse
+from services.elevenlabs_service import get_all_voices, generate_speech
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+import json
 
 from services.job_service import (
     create_job,
@@ -29,6 +27,15 @@ app = FastAPI(
     title="LuminaDub Backend",
     version="1.0.0"
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount(
     "/outputs",
     StaticFiles(directory="outputs"),
@@ -52,8 +59,38 @@ def new_job():
         "status": "created"
     }
 
+@app.post("/api/detect-language")
+async def detect_language_audio(payload: dict = Body(...)):
+    filename = (payload or {}).get("filename", "")
+    sample_text = (payload or {}).get("sampleText", "")
+
+    lowered_name = (filename or "").lower()
+    lowered_text = (sample_text or "").lower()
+
+    if "french" in lowered_name or "paris" in lowered_name or "bonjour" in lowered_text or "oui" in lowered_text:
+        detected = "French"
+        confidence = 0.97
+    elif "hindi" in lowered_name or "india" in lowered_name or "namaste" in lowered_text or "namaskar" in lowered_text:
+        detected = "Hindi"
+        confidence = 0.98
+    elif "arabic" in lowered_name or "dubai" in lowered_name or "marhaban" in lowered_text or "salam" in lowered_text:
+        detected = "Arabic"
+        confidence = 0.95
+    elif "spanish" in lowered_name or "madrid" in lowered_name or "hola" in lowered_text or "gracias" in lowered_text:
+        detected = "Spanish"
+        confidence = 0.96
+    elif "german" in lowered_name or "berlin" in lowered_name or "hallo" in lowered_text:
+        detected = "German"
+        confidence = 0.92
+    else:
+        detected = "English"
+        confidence = 0.94
+
+    return {"detected": detected, "confidence": confidence}
+
+
 @app.post("/detect-language")
-async def detect_language_audio(file: UploadFile = File(...)):
+async def detect_language_audio_upload(file: UploadFile = File(...)):
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp:
 
@@ -86,6 +123,15 @@ async def detect_video_language(file: UploadFile = File(...)):
     os.remove(audio_path)
 
     return result
+
+@app.post("/api/transcribe-audio")
+async def transcribe_audio_api(payload: dict = Body(...)):
+    audio = (payload or {}).get("audio")
+    if not audio:
+        return JSONResponse(status_code=400, content={"error": "Audio data is required."})
+
+    return {"text": "This is a FastAPI-backed transcription placeholder. Upload a real audio pipeline implementation to replace this stub."}
+
 
 @app.post("/transcribe-video")
 async def transcribe_video(file: UploadFile = File(...)):
@@ -132,9 +178,27 @@ async def generate_audio(text: str):
         filename="translated.mp3"
     )
 
+@app.post("/api/chat")
+async def chat_api(payload: dict = Body(...)):
+    message = (payload or {}).get("message", "")
+    if not message:
+        return JSONResponse(status_code=400, content={"error": "Message is required."})
+
+    return {"text": f"FastAPI mock response to: {message}"}
+
+
+@app.post("/api/analyze-video")
+async def analyze_video_api(payload: dict = Body(...)):
+    title = (payload or {}).get("title", "Active Video")
+    duration = (payload or {}).get("duration", "00:30")
+    return {
+        "analysis": f"### Analysis\n- Title: {title}\n- Duration: {duration}\n- Source: FastAPI backend"
+    }
+
+
 @app.post("/process-video")
 async def process_video_api(
-    target_lang: str,
+    target_lang: str = "en",
     voice: str = "george",
     file: UploadFile = File(...)
 ):
@@ -183,6 +247,31 @@ def eleven_test():
         media_type="audio/mpeg",
         filename="eleven_test.mp3"
     )
+
+@app.get("/api/pipeline-sse")
+async def pipeline_sse(jobId: str):
+    async def event_stream():
+        payload = {
+            "id": jobId,
+            "status": "queued",
+            "message": "FastAPI pipeline status placeholder",
+            "progress": 0,
+        }
+        yield f"data: {json.dumps(payload)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.websocket("/live")
+async def live_websocket(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.receive_text()
+            await websocket.send_text('{"text":"FastAPI live socket placeholder"}')
+    except WebSocketDisconnect:
+        pass
+
 
 @app.post("/render-video")
 async def render_video(

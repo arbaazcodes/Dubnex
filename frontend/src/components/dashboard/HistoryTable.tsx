@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Search, Globe, Clock, FileVideo, CheckCircle, RefreshCw, Trash2, ArrowRight } from 'lucide-react';
-import { Project } from '../types';
+import { Project } from '../../types';
 
 interface HistoryTableProps {
   projects: Project[];

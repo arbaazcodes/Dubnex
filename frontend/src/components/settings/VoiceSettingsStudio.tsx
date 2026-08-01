@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Volume2, Sliders, AudioLines, Sparkles, Check, Info, HelpCircle } from 'lucide-react';
-import { VoiceSettings, TTSVoiceEngine } from '../types';
-import { voicePresets } from '../data';
+import { VoiceSettings, TTSVoiceEngine } from '../../types';
+import { voicePresets } from '../../constants/data';
 
 interface VoiceSettingsStudioProps {
   currentSettings: VoiceSettings;

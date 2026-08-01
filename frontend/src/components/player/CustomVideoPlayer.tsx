@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Play, Pause, Volume2, VolumeX, Maximize2, Download, Subtitles, Volume1, Languages, Sparkles } from 'lucide-react';
-import { Project, TranscriptSegment } from '../types';
+import { Project, TranscriptSegment } from '../../types';
 
 interface CustomVideoPlayerProps {
   project: Project | null;

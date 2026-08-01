@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Edit2, Check, RefreshCw, Volume2, Save, User2, Play, Plus, Trash2 } from 'lucide-react';
-import { Project, TranscriptSegment } from '../types';
+import { Project, TranscriptSegment } from '../../types';
 
 interface TranscriptEditorProps {
   project: Project | null;

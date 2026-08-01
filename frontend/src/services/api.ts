@@ -23,3 +23,27 @@ export async function processVideo(
 
   return response.json();
 }
+
+export async function translateVideo(
+  file: File,
+  language: string,
+  voice: string
+) {
+  const form = new FormData();
+
+  form.append("file", file);
+  form.append("target_language", language);
+  form.append("voice", voice);
+
+  const response = await fetch(`${API_BASE}/process-video`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Translation failed");
+  }
+
+  return response.json();
+}

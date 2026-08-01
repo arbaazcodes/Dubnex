@@ -1,5 +1,5 @@
 // src/data.ts
-import { Language, Project, VoiceSettings } from './types';
+import { Language, Project, VoiceSettings } from '../types';
 
 export const targetLanguages: Language[] = [
   { code: 'en', name: 'English', localName: 'English', flag: '🇺🇸' },

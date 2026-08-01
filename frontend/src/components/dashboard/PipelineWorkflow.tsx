@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { Play, Check, AlertCircle, Cpu, Loader2, FileCode, RefreshCw } from 'lucide-react';
-import { Project } from '../types';
+import { Project } from '../../types';
 
 interface PipelineWorkflowProps {
   project: Project | null;
