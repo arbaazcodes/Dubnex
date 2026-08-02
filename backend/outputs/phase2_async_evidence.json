@@ -1,0 +1,89 @@
+{
+  "phase": "Phase 2 - Background Processing",
+  "steps": [
+    {
+      "name": "post_returns_job_id_quickly",
+      "ok": true,
+      "detail": {
+        "elapsed_sec": 0.068,
+        "body": {
+          "job_id": "b61ba4bb-3a37-47d5-b459-21d0794985f9",
+          "status": "queued",
+          "message": "Processing started in background"
+        }
+      }
+    },
+    {
+      "name": "sse_content_type",
+      "ok": true,
+      "detail": "text/event-stream; charset=utf-8"
+    },
+    {
+      "name": "sse_cors",
+      "ok": true,
+      "detail": {
+        "access-control-allow-origin": "http://127.0.0.1:5173"
+      }
+    },
+    {
+      "name": "all_stages_emitted",
+      "ok": true,
+      "detail": {
+        "stages": [
+          "Upload",
+          "Audio Extraction",
+          "Whisper",
+          "Translation",
+          "TTS",
+          "Audio Merge",
+          "Video Rendering",
+          "Completed"
+        ]
+      }
+    },
+    {
+      "name": "progress_100",
+      "ok": true,
+      "detail": 100
+    },
+    {
+      "name": "video_url_present",
+      "ok": true,
+      "detail": "http://127.0.0.1:8000/outputs/f9a0e888-990e-41ea-8a4b-76d4af235ea1.mp4"
+    },
+    {
+      "name": "preview_loads",
+      "ok": true,
+      "detail": {
+        "status": 206,
+        "type": "video/mp4"
+      }
+    },
+    {
+      "name": "download_loads",
+      "ok": true,
+      "detail": {
+        "bytes": 8431475
+      }
+    },
+    {
+      "name": "react_result_state",
+      "ok": true,
+      "detail": {
+        "appState": "result",
+        "selectedProjectId": "b61ba4bb-3a37-47d5-b459-21d0794985f9",
+        "progress": 100,
+        "status": "Completed",
+        "videoUrl": "http://127.0.0.1:8000/outputs/f9a0e888-990e-41ea-8a4b-76d4af235ea1.mp4"
+      }
+    }
+  ],
+  "react_state_simulated": {
+    "appState": "result",
+    "selectedProjectId": "b61ba4bb-3a37-47d5-b459-21d0794985f9",
+    "progress": 100,
+    "status": "Completed",
+    "videoUrl": "http://127.0.0.1:8000/outputs/f9a0e888-990e-41ea-8a4b-76d4af235ea1.mp4"
+  },
+  "stage2_pass": true
+}

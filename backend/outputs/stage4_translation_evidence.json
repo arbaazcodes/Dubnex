@@ -1,0 +1,27 @@
+{
+  "model_name": "facebook/nllb-200-distilled-600M",
+  "translation_device": "cuda",
+  "react_request_url": "http://127.0.0.1:8000/process-video?target_lang=es&voice=george",
+  "backend_received_target_lang": "es",
+  "react_target_reaches_backend": true,
+  "source_language": "hi",
+  "target_language": "es",
+  "whisper_segment_count": 1,
+  "translated_segment_count": 1,
+  "one_to_one_segments": true,
+  "timestamps_preserved": true,
+  "original_text_sample": "मैं इस विटामिन सी सीरम का उप्योग कर रहा हूँ हर सुबह हाल ही में और मैं इमानदारी से यह सुपर हलका लगता है, बहुत जल्दी अवशोषित करता है और मेरी त्वचा को इतना ताजा देता है, यह हर दिन धूप से बचाने के लिए मेरा पसंदीदा कदम बन गया है",
+  "translated_text_sample": "He estado tomando este serum de vitamina C cada mañana recientemente y, honestamente, parece muy ligero, absorbe muy rápidamente y hace que mi piel sea tan fresca que se ha convertido en mi paso favorito para protegerme del sol todos los días.",
+  "translated_full_text": "He estado tomando este serum de vitamina C cada mañana recientemente y, honestamente, parece muy ligero, absorbe muy rápidamente y hace que mi piel sea tan fresca que se ha convertido en mi paso favorito para protegerme del sol todos los días.",
+  "segments_sample": [
+    {
+      "id": 0,
+      "start": 0.0,
+      "end": 15.0,
+      "duration": 15.0,
+      "original": "मैं इस विटामिन सी सीरम का उप्योग कर रहा हूँ हर सुबह हाल ही में और मैं इमानदारी से यह सुपर हलका लगता है, बहुत जल्दी अवशोषित करता है और मेरी त्वचा को इतना ताजा देता है, यह हर दिन धूप से बचाने के लिए मेरा पसंदीदा कदम बन गया है",
+      "translated": "He estado tomando este serum de vitamina C cada mañana recientemente y, honestamente, parece muy ligero, absorbe muy rápidamente y hace que mi piel sea tan fresca que se ha convertido en mi paso favorito para protegerme del sol todos los días."
+    }
+  ],
+  "all_segments_translated": true
+}

@@ -1,0 +1,37 @@
+{
+  "tts_engine": "ElevenLabs",
+  "elevenlabs_model": "eleven_multilingual_v2",
+  "api_key_loaded_from_env": true,
+  "api_key_matches_config": true,
+  "react_request_url": "http://127.0.0.1:8000/process-video?target_lang=es&voice=george",
+  "react_voice": "george",
+  "backend_received_voice": "george",
+  "react_voice_reaches_backend": true,
+  "voice_map_key": "george",
+  "voice_id": "JBFqnCBsd6RMkjVDRZzb",
+  "voice_name": "George - Warm, Captivating Storyteller",
+  "language_passed_to_tts": "es",
+  "note_language": "language is passed through tts_service but elevenlabs_service.generate_speech does not consume it; multilingual model handles language from text",
+  "translated_segment_count": 1,
+  "generated_audio_count": 1,
+  "one_audio_per_segment": true,
+  "output_dir": "C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs",
+  "audio_files": [
+    {
+      "id": 0,
+      "path": "C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\segment_000.mp3",
+      "exists": true,
+      "size_bytes": 256671,
+      "ffprobe_ok": true,
+      "format": "mp3",
+      "duration": 15.975329,
+      "codec": "mp3",
+      "sample_rate": 44100,
+      "channels": 1,
+      "text_sample": "He estado tomando este serum de vitamina C cada mañana recientemente y, honestamente, parece muy ligero, absorbe muy ráp",
+      "start": 0.0,
+      "end": 15.0
+    }
+  ],
+  "audio_format_expected": "mp3"
+}

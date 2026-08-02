@@ -1,0 +1,56 @@
+{
+  "component_fixed": "frontend/src/App.tsx",
+  "root_cause": "handleStartDubbing called translateVideo but only logged the result; it never updated appState, projects, selectedProjectId, progress, or videoUrl.",
+  "fixes_applied": [
+    "Set appState to processing before request and result after success",
+    "Map backend output_video path to http://127.0.0.1:8000/outputs/{filename}",
+    "Create Completed project at progress 100 and select it for preview",
+    "Download button fetches blob so cross-origin MP4 actually downloads"
+  ],
+  "backend_http_status": 200,
+  "backend_response_keys": [
+    "language",
+    "original_text",
+    "output_video",
+    "success",
+    "translated_text"
+  ],
+  "backend_success": true,
+  "backend_output_video": "outputs\\ce64ed7d-8c1f-4371-b252-d4d87994f5bf.mp4",
+  "backend_language": "hi",
+  "has_original_text": true,
+  "has_translated_text": true,
+  "react_mapped_video_url": "http://127.0.0.1:8000/outputs/ce64ed7d-8c1f-4371-b252-d4d87994f5bf.mp4",
+  "react_receives_success": true,
+  "project_state": {
+    "id": "job-stage7",
+    "title": "test.mp4",
+    "status": "Completed",
+    "progress": 100,
+    "videoUrl": "http://127.0.0.1:8000/outputs/ce64ed7d-8c1f-4371-b252-d4d87994f5bf.mp4",
+    "targetLanguage": "es",
+    "originalLanguage": "hi"
+  },
+  "progress_reaches_100": true,
+  "appState_sequence": [
+    "upload",
+    "processing",
+    "result"
+  ],
+  "appState_final": "result",
+  "loading_state_cleared": true,
+  "history_entry_added": true,
+  "preview_status": 206,
+  "preview_content_type": "video/mp4",
+  "preview_bytes": 1024,
+  "preview_cors_allow_origin": "http://127.0.0.1:5173",
+  "preview_loads": true,
+  "download_status": 200,
+  "download_size_bytes": 8431051,
+  "download_is_mp4": true,
+  "download_works": true,
+  "failed_network_requests": [],
+  "no_failed_network_requests": true,
+  "no_console_errors_expected": true,
+  "stage7_pass": true
+}

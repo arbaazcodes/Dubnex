@@ -1,0 +1,38 @@
+{
+  "merge_function": "services.audio_stitcher_service.merge_audio_segments",
+  "render_function": "services.video_renderer_service.replace_audio",
+  "tts_files_passed_to_merge": [
+    "C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\segment_000.mp3"
+  ],
+  "all_tts_files_in_concat": true,
+  "concat_txt": "C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\concat.txt",
+  "concat_lines": [
+    "file 'C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\segment_000.mp3'"
+  ],
+  "merged_audio_path": "C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\final_audio.mp3",
+  "merged_audio_size": 261268,
+  "merged_audio_duration": 16.253968,
+  "original_video_path": "C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\9cb0ddea-321d-4e5c-80fb-7046c7d40db2.mp4",
+  "original_duration": 15.041667,
+  "final_video_path": "C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\c59e28d1-3874-4ae7-ab81-d95d3c10d6f8.mp4",
+  "final_exists": true,
+  "final_size_bytes": 8431597,
+  "final_duration": 15.041667,
+  "duration_delta_seconds": 0.0,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_sample_rate": 44100,
+  "audio_channels": 1,
+  "mean_volume_db": -23.8,
+  "max_volume_db": -7.3,
+  "checks": {
+    "missing_audio": false,
+    "duplicated_audio": false,
+    "silent_output": false,
+    "clipping_suspected": false,
+    "desync_suspected_gt_1s": false,
+    "opens_in_ffmpeg": true
+  },
+  "ffmpeg_merge_log_tail": "ffmpeg version N-123074-g4e32fb4c2a-20260228 Copyright (c) 2000-2026 the FFmpeg developers\n  built with gcc 15.2.0 (crosstool-NG 1.28.0.1_403899e)\n  configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-vulkan --enable-libshaderc --enable-libvorbis --disable-libxcb --disable-xlib --disable-libpulse --enable-opencl --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-amf --enable-libaom --enable-libaribb24 --enable-avisynth --enable-chromaprint --enable-libdav1d --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribcaption --enable-libass --enable-libbluray --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librav1e --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-libvidstab --enable-libvvenc --enable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20260228\n  libavutil      60. 25.100 / 60. 25.100\n  libavcodec     62. 23.103 / 62. 23.103\n  libavformat    62. 10.101 / 62. 10.101\n  libavdevice    62.  2.100 / 62.  2.100\n  libavfilter    11. 12.100 / 11. 12.100\n  libswscale      9.  4.100 /  9.  4.100\n  libswresample   6.  2.100 /  6.  2.100\nInput #0, concat, from 'C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\concat.txt':\n  Duration: N/A, start: -0.025057, bitrate: 128 kb/s\n  Stream #0:0: Audio: mp3 (mp3float), 44100 Hz, mono, fltp, 128 kb/s, start -0.025057\nStream mapping:\n  Stream #0:0 -> #0:0 (copy)\nOutput #0, mp3, to 'C:\\Users\\arbaa\\OneDrive\\Documents\\SCREEN.AI\\backend\\outputs\\final_audio.mp3':\n  Metadata:\n    TSSE            : Lavf62.10.101\n  Stream #0:0: Audio: mp3, 44100 Hz, mono, fltp, 128 kb/s\nPress [q] to stop, [?] for help\n[out#0/mp3 @ 000001fb64de1840] video:0KiB audio:255KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.177143%\nsize=     255KiB time=00:00:16.30 bitrate= 128.2kbits/s speed=2.88e+03x elapsed=0:00:00.00    ",
+  "ffmpeg_render_log_tail": ""
+}
