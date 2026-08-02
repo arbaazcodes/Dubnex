@@ -1,46 +1,130 @@
-const API_BASE = "http://127.0.0.1:8000";
+import { getIdToken } from '../lib/firebase';
 
-export async function processVideo(
-  file: File,
-  targetLanguage: string,
-  voice: string = "george"
-) {
-  const formData = new FormData();
+const rawApiBase = import.meta.env.VITE_API_BASE_URL;
+// Empty string = same-origin (production nginx reverse-proxy). Unset = local API default.
+const API_BASE =
+  rawApiBase === undefined || rawApiBase === null
+    ? "http://127.0.0.1:8000"
+    : String(rawApiBase).replace(/\/$/, "");
 
-  formData.append("file", file);
+export { API_BASE };
 
-  const response = await fetch(
-    `${API_BASE}/process-video?target_lang=${targetLanguage}&voice=${voice}`,
-    {
-      method: "POST",
-      body: formData,
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error("Video processing failed");
+function apiOriginForUrl(): string {
+  if (API_BASE) return API_BASE;
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
   }
+  return "http://127.0.0.1:8000";
+}
 
-  return response.json();
+export function getWebSocketUrl(path: string) {
+  const base = new URL(apiOriginForUrl());
+  const wsProtocol = base.protocol === "https:" ? "wss:" : "ws:";
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${wsProtocol}//${base.host}${normalizedPath}`;
+}
+
+export type TranslateVideoMeta = {
+  duration?: string;
+  resolution?: string;
+  fps?: number;
+  fileSize?: string;
+};
+
+async function authHeaders(extra?: HeadersInit): Promise<HeadersInit> {
+  const token = await getIdToken(false);
+  const headers: Record<string, string> = {
+    ...(extra as Record<string, string> | undefined),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+/** Attach Firebase ID token as query param for <video> / EventSource */
+export async function withAuthTokenParam(url: string, forceRefresh = false): Promise<string> {
+  const token = await getIdToken(forceRefresh);
+  const u = new URL(url, apiOriginForUrl());
+  if (token) {
+    u.searchParams.set("token", token);
+  } else {
+    u.searchParams.delete("token");
+  }
+  // strip legacy user_id
+  u.searchParams.delete("user_id");
+  return u.toString();
+}
+
+export function getProjectVideoUrl(projectId: string) {
+  return `${API_BASE}/api/projects/${encodeURIComponent(projectId)}/video`;
+}
+
+export function getProjectDownloadUrl(projectId: string) {
+  return `${API_BASE}/api/projects/${encodeURIComponent(projectId)}/download`;
+}
+
+export async function getAuthenticatedProjectVideoUrl(projectId: string, forceRefresh = false) {
+  return withAuthTokenParam(getProjectVideoUrl(projectId), forceRefresh);
+}
+
+export async function getAuthenticatedProjectDownloadUrl(projectId: string, forceRefresh = false) {
+  return withAuthTokenParam(getProjectDownloadUrl(projectId), forceRefresh);
+}
+
+/**
+ * Resolve media URL for a project. Prefer async authenticated helpers for playback.
+ * Sync helper returns base secure path (caller should add token).
+ */
+export function resolveProjectMediaUrl(
+  project: { id: string; videoUrl?: string; dubbedUrl?: string; status?: string },
+  kind: "video" | "download" = "video"
+) {
+  const raw = project.dubbedUrl || project.videoUrl || "";
+  if (/^https?:\/\/storage\.googleapis\.com/i.test(raw) || /^blob:/i.test(raw)) {
+    return raw;
+  }
+  if (project.id && (project.status === "Completed" || /\/outputs\//i.test(raw) || /\/api\/projects\//i.test(raw))) {
+    return kind === "download"
+      ? getProjectDownloadUrl(project.id)
+      : getProjectVideoUrl(project.id);
+  }
+  return raw;
 }
 
 export async function translateVideo(
   file: File,
   language: string,
-  voice: string
+  voice: string,
+  meta?: TranslateVideoMeta
 ) {
   const form = new FormData();
-
   form.append("file", file);
 
-  const response = await fetch(
-    `${API_BASE}/process-video?target_lang=${encodeURIComponent(language)}&voice=${encodeURIComponent(voice)}`,
-    {
-      method: "POST",
-      body: form,
-    }
-  );
+  const params = new URLSearchParams({
+    target_lang: language,
+    voice: voice || "george",
+  });
+  if (meta?.duration) params.set("duration", meta.duration);
+  if (meta?.resolution) params.set("resolution", meta.resolution);
+  if (meta?.fps != null && Number.isFinite(meta.fps)) {
+    params.set("fps", String(meta.fps));
+  }
+  if (meta?.fileSize) params.set("file_size", meta.fileSize);
 
+  const headers = await authHeaders();
+  const response = await fetch(`${API_BASE}/process-video?${params.toString()}`, {
+    method: "POST",
+    body: form,
+    headers,
+  });
+
+  if (response.status === 401) {
+    throw new Error("Unauthorized — please sign in with Google and try again.");
+  }
+  if (response.status === 403) {
+    throw new Error("Forbidden — you do not have permission to process this video.");
+  }
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(errorText || "Translation failed");
@@ -50,9 +134,45 @@ export async function translateVideo(
     job_id: string;
     status: string;
     message?: string;
+    voice?: string;
   }>;
 }
 
-export function getJobEventsUrl(jobId: string) {
-  return `${API_BASE}/events/${encodeURIComponent(jobId)}`;
+export async function getJobEventsUrl(jobId: string) {
+  const base = `${API_BASE}/events/${encodeURIComponent(jobId)}`;
+  return withAuthTokenParam(base);
+}
+
+export async function fetchUserProjectsFromApi(): Promise<any[]> {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE}/api/projects`, { headers });
+  if (res.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  const data = await res.json();
+  return Array.isArray(data.projects) ? data.projects : [];
+}
+
+export async function deleteProjectOnApi(projectId: string): Promise<void> {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers,
+  });
+  if (res.status === 401) throw new Error("Unauthorized");
+  if (res.status === 403) throw new Error("Forbidden");
+  if (res.status === 404) throw new Error("Project not found");
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function downloadProjectBlob(projectId: string): Promise<Blob> {
+  const url = await getAuthenticatedProjectDownloadUrl(projectId, true);
+  const res = await fetch(url);
+  if (res.status === 401) throw new Error("Unauthorized");
+  if (res.status === 403) throw new Error("Forbidden");
+  if (!res.ok) throw new Error("Download failed");
+  return res.blob();
 }

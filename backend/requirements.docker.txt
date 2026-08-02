@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-dotenv
+python-multipart
+google-auth
+ffmpeg-python
+faster-whisper
+transformers
+elevenlabs
+boto3
+sqlalchemy
+psycopg[binary]
+redis
+prometheus_client

@@ -1,7 +1,9 @@
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
 
-MODEL_NAME = "facebook/nllb-200-distilled-600M"
+from config import TRANSLATION_MODEL, TRANSLATION_BATCH_SIZE
+
+MODEL_NAME = TRANSLATION_MODEL
 
 print("Loading Translation Model...")
 
@@ -60,38 +62,65 @@ LANGUAGE_CODES = {
 }
 
 
-def translate_text(text: str, source_language: str, target_language: str):
-
+def _normalize_langs(source_language: str, target_language: str) -> tuple[str, str]:
     source_language = source_language.lower().strip()
     target_language = target_language.lower().strip()
-
     if source_language not in LANGUAGE_CODES:
         raise ValueError(f"Unsupported source language: {source_language}")
-
     if target_language not in LANGUAGE_CODES:
         raise ValueError(f"Unsupported target language: {target_language}")
+    return source_language, target_language
+
+
+def translate_text(text: str, source_language: str, target_language: str):
+    source_language, target_language = _normalize_langs(source_language, target_language)
+    return _translate_batch([text], source_language, target_language)[0]
+
+
+def _translate_batch(texts: list[str], source_language: str, target_language: str) -> list[str]:
+    """
+    Batched NLLB generate. Same forced BOS / max_new_tokens as single-item path.
+    Empty strings short-circuit to empty outputs (matches prior per-segment behavior).
+    """
+    if not texts:
+        return []
 
     tokenizer.src_lang = LANGUAGE_CODES[source_language]
+    bos_id = tokenizer.convert_tokens_to_ids(LANGUAGE_CODES[target_language])
 
-    inputs = tokenizer(text, return_tensors="pt")
+    # Preserve empties without burning GPU
+    outputs: list[str | None] = [None] * len(texts)
+    nonempty_idx = [i for i, t in enumerate(texts) if (t or "").strip()]
+    for i, t in enumerate(texts):
+        if not (t or "").strip():
+            outputs[i] = ""
 
+    if not nonempty_idx:
+        return ["" for _ in texts]
+
+    batch_inputs = [texts[i] for i in nonempty_idx]
+    inputs = tokenizer(
+        batch_inputs,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=512,
+    )
     if DEVICE == "cuda":
         inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
-    generated_tokens = model.generate(
-        **inputs,
-        forced_bos_token_id=tokenizer.convert_tokens_to_ids(
-    LANGUAGE_CODES[target_language]
-),
-        max_new_tokens=256,
-    )
+    with torch.inference_mode():
+        generated_tokens = model.generate(
+            **inputs,
+            forced_bos_token_id=bos_id,
+            max_new_tokens=256,
+        )
 
-    translated = tokenizer.batch_decode(
-        generated_tokens,
-        skip_special_tokens=True,
-    )[0]
+    decoded = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+    for idx, text in zip(nonempty_idx, decoded):
+        outputs[idx] = text
+    return [o if o is not None else "" for o in outputs]
 
-    return translated
 
 def translate_segments(
     segments: list,
@@ -99,26 +128,28 @@ def translate_segments(
     target_language: str
 ):
     """
-    Translate Whisper segments one by one while preserving timing.
+    Translate Whisper segments while preserving timing.
+    Uses configurable batching (TRANSLATION_BATCH_SIZE) for throughput.
     """
+    source_language, target_language = _normalize_langs(source_language, target_language)
+    if not segments:
+        return []
 
+    batch_size = TRANSLATION_BATCH_SIZE
     translated_segments = []
 
-    for segment in segments:
-
-        translated_text = translate_text(
-            text=segment["text"],
-            source_language=source_language,
-            target_language=target_language
-        )
-
-        translated_segments.append({
-            "id": segment["id"],
-            "start": segment["start"],
-            "end": segment["end"],
-            "duration": segment["duration"],
-            "original": segment["text"],
-            "translated": translated_text
-        })
+    for start in range(0, len(segments), batch_size):
+        chunk = segments[start : start + batch_size]
+        texts = [seg.get("text") or "" for seg in chunk]
+        translated_texts = _translate_batch(texts, source_language, target_language)
+        for segment, translated_text in zip(chunk, translated_texts):
+            translated_segments.append({
+                "id": segment["id"],
+                "start": segment["start"],
+                "end": segment["end"],
+                "duration": segment["duration"],
+                "original": segment["text"],
+                "translated": translated_text,
+            })
 
     return translated_segments

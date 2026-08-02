@@ -28,24 +28,45 @@ import {
   Volume2,
   VolumeX,
   Activity,
-  FileText,
   Send,
-  Bot
+  Bot,
+  FolderOpen,
+  Mic2
 } from 'lucide-react';
 
-import { Project, VoiceSettings, TTSVoiceEngine } from './types';
+import { Project, VoiceSettings, TTSVoiceEngine, TranscriptSegment, LibraryVoice } from './types';
 import { targetLanguages, voicePresets } from './constants/data';
-import { saveUserProject, loadUserProjects, loginWithGoogleMock, AuthUser, isRealFirebase } from './lib/firebase';
-import { translateVideo, getJobEventsUrl } from './services/api';
+import { voiceLibraryCatalog, VOICE_LIBRARY_STORAGE_KEY, resolveApiVoiceKey } from './constants/voices';
+import { saveUserProject, loadUserProjects, deleteUserProject, loginWithGoogle, logoutFirebase, subscribeToAuth, AuthUser, isRealFirebase } from './lib/firebase';
+import {
+  translateVideo,
+  getJobEventsUrl,
+  API_BASE,
+  getWebSocketUrl,
+  getProjectVideoUrl,
+  getProjectDownloadUrl,
+  getAuthenticatedProjectVideoUrl,
+  resolveProjectMediaUrl,
+  fetchUserProjectsFromApi,
+  deleteProjectOnApi,
+  downloadProjectBlob,
+} from './services/api';
+import ProjectsDashboard from './components/dashboard/ProjectsDashboard';
+import ProjectDetails from './components/dashboard/ProjectDetails';
+import TranscriptEditor from './components/chat/TranscriptEditor';
+import VoiceLibrary, { libraryVoiceToSettings } from './components/voices/VoiceLibrary';
 
 export default function App() {
   // Navigation & Core States
   const [appState, setAppState] = useState<'upload' | 'processing' | 'result'>('upload');
+  const [mainView, setMainView] = useState<'studio' | 'projects' | 'project-details' | 'voices'>('studio');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
   const [showSettings, setShowSettings] = useState<boolean>(false);
 
   // User Authentication state
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [secureVideoSrc, setSecureVideoSrc] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
   // Current translation job tracking
@@ -85,8 +106,10 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     emotion: 'Professional',
     energy: 1.0,
     pauseControl: 0.25,
-    voiceName: 'ElevenLabs Premium Dub'
+    voiceName: 'George'
   });
+  const [favoriteVoiceIds, setFavoriteVoiceIds] = useState<string[]>([]);
+  const [defaultVoiceId, setDefaultVoiceId] = useState<string | null>('el-george');
   const [geminiKey, setGeminiKey] = useState('••••••••••••••••••••••••••••');
   const [elevenLabsKey, setElevenLabsKey] = useState('••••••••••••••••••••••••••••');
 
@@ -128,6 +151,15 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const liveWsRef = useRef<WebSocket | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const processingStartedAtRef = useRef<number | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const previewObjectUrlRef = useRef<string | null>(null);
+
+  // Live processing dashboard state (driven by SSE)
+  const [pipelineStageHistory, setPipelineStageHistory] = useState<string[]>(['Upload']);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [processingLogs, setProcessingLogs] = useState<{ id: string; timestamp: string; level: string; message: string; step?: string }[]>([]);
+
 
   // Active Project helper
   const getActiveProject = (): Project | null => {
@@ -135,6 +167,153 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   };
 
   const activeProject = getActiveProject();
+
+  const persistProjects = (nextList: Project[]) => {
+    setProjects(nextList);
+    localStorage.setItem('ai_video_translator_projects', JSON.stringify(nextList));
+  };
+
+  const handlePreviewProject = (id: string) => {
+    const project = projects.find((p) => p.id === id);
+    if (!project || project.status !== 'Completed') return;
+    if (!user) {
+      setUploadError('Sign in required to preview secured videos.');
+      return;
+    }
+    setSelectedProjectId(id);
+    setMainView('studio');
+    setAppState('result');
+  };
+
+  const handleOpenProjectDetails = (id: string) => {
+    setSelectedProjectId(id);
+    setMainView('project-details');
+  };
+
+  const handleDownloadProject = async (project: Project) => {
+    if (!user) {
+      setUploadError('Sign in required to download.');
+      return;
+    }
+    try {
+      const blob = await downloadProjectBlob(project.id);
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `${project.title || 'dubbed_video'}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err: any) {
+      console.error('Download failed:', err);
+      setUploadError(err?.message || 'Download failed');
+    }
+  };
+
+  const handleDeleteProject = async (id: string) => {
+    if (user) {
+      try {
+        await deleteProjectOnApi(id);
+      } catch (err) {
+        console.warn('API delete failed, continuing local delete', err);
+      }
+      await deleteUserProject(user.uid, id);
+    }
+    const nextList = projects.filter((p) => p.id !== id);
+    persistProjects(nextList);
+    if (selectedProjectId === id) {
+      setSelectedProjectId(null);
+      if (appState === 'result') setAppState('upload');
+      if (mainView === 'project-details') setMainView('projects');
+    }
+  };
+
+  const handleDuplicateProject = async (id: string) => {
+    const source = projects.find((p) => p.id === id);
+    if (!source) return;
+    const clone: Project = {
+      ...source,
+      id: `dup-${Date.now().toString(16)}`,
+      title: `${source.title} (Copy)`,
+      createdAt: new Date().toISOString(),
+      logs: [
+        ...(source.logs || []),
+        {
+          id: `log-dup-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          message: 'Project duplicated from existing record.',
+          step: source.status,
+        },
+      ],
+    };
+    const nextList = [clone, ...projects];
+    persistProjects(nextList);
+    if (user) {
+      await saveUserProject(user.uid, clone);
+    }
+  };
+
+  const handleSaveTranscript = async (updatedTranscript: TranscriptSegment[]) => {
+    if (!selectedProjectId) return;
+    const nextList = projects.map((p) =>
+      p.id === selectedProjectId
+        ? {
+            ...p,
+            transcript: updatedTranscript,
+            logs: [
+              ...(p.logs || []),
+              {
+                id: `log-transcript-${Date.now()}`,
+                timestamp: new Date().toISOString(),
+                level: 'info' as const,
+                message: 'Transcript edits saved.',
+                step: 'Transcript Editor',
+              },
+            ],
+          }
+        : p
+    );
+    persistProjects(nextList);
+    const saved = nextList.find((p) => p.id === selectedProjectId);
+    if (user && saved) {
+      await saveUserProject(user.uid, saved);
+    }
+  };
+
+  const formatProcessingDuration = (ms: number) => {
+    if (!Number.isFinite(ms) || ms < 0) return '—';
+    const totalSec = Math.round(ms / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    if (mins <= 0) return `${secs}s`;
+    return `${mins}m ${secs.toString().padStart(2, '0')}s`;
+  };
+
+  const persistVoiceLibraryPrefs = (favorites: string[], defaultId: string | null) => {
+    localStorage.setItem(
+      VOICE_LIBRARY_STORAGE_KEY,
+      JSON.stringify({ favoriteIds: favorites, defaultVoiceId: defaultId })
+    );
+  };
+
+  const handleToggleFavoriteVoice = (voiceId: string) => {
+    setFavoriteVoiceIds((prev) => {
+      const next = prev.includes(voiceId)
+        ? prev.filter((id) => id !== voiceId)
+        : [...prev, voiceId];
+      persistVoiceLibraryPrefs(next, defaultVoiceId);
+      return next;
+    });
+  };
+
+  const handleSetDefaultVoice = (voice: LibraryVoice) => {
+    setDefaultVoiceId(voice.id);
+    setVoiceSettings((prev) => libraryVoiceToSettings(voice, prev));
+    setActiveEngine('ElevenLabs');
+    persistVoiceLibraryPrefs(favoriteVoiceIds, voice.id);
+  };
 
   // Load theme and saved state
   useEffect(() => {
@@ -150,19 +329,61 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     if (savedProjects) {
       try {
         const parsed = JSON.parse(savedProjects);
-        setProjects(parsed);
+        const normalized = (Array.isArray(parsed) ? parsed : []).map((p: Project) => {
+          if (p?.status === 'Completed' && p.id) {
+            return {
+              ...p,
+              videoUrl: getProjectVideoUrl(p.id),
+              dubbedUrl: getProjectDownloadUrl(p.id),
+            };
+          }
+          if (p?.videoUrl && /\/outputs\//i.test(p.videoUrl) && p.id) {
+            return {
+              ...p,
+              videoUrl: getProjectVideoUrl(p.id),
+              dubbedUrl: getProjectDownloadUrl(p.id),
+            };
+          }
+          return p;
+        });
+        setProjects(normalized);
       } catch (e) {
         console.error('Failed to parse cached jobs:', e);
       }
     }
 
-    // Try auto-login for a seamless user experience
-    const storedUser = localStorage.getItem('luminadub_user');
-    if (storedUser) {
+    const savedVoicePrefs = localStorage.getItem(VOICE_LIBRARY_STORAGE_KEY);
+    if (savedVoicePrefs) {
       try {
-        setUser(JSON.parse(storedUser));
-      } catch (e) {}
+        const parsed = JSON.parse(savedVoicePrefs);
+        if (Array.isArray(parsed.favoriteIds)) {
+          setFavoriteVoiceIds(parsed.favoriteIds);
+        }
+        if (parsed.defaultVoiceId) {
+          setDefaultVoiceId(parsed.defaultVoiceId);
+          const voice = voiceLibraryCatalog.find((v) => v.id === parsed.defaultVoiceId);
+          if (voice) {
+            setVoiceSettings((prev) => libraryVoiceToSettings(voice, prev));
+          }
+        }
+      } catch (e) {
+        console.error('Failed to parse voice library prefs:', e);
+      }
     }
+
+    // Firebase Auth session is restored via subscribeToAuth (below)
+  }, []);
+
+  // Real Firebase Auth session persistence + token refresh via SDK
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth((authUser) => {
+      setUser(authUser);
+      setAuthReady(true);
+      if (!authUser) {
+        setSecureVideoSrc('');
+      }
+    });
+    return unsubscribe;
   }, []);
 
   // Sync state transitions from the backend SSE status updates
@@ -174,44 +395,148 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     }
   }, [activeProject?.status, appState]);
 
+  // Elapsed timer while processing
+  useEffect(() => {
+    if (appState !== 'processing' || !processingStartedAtRef.current) {
+      return;
+    }
+    const tick = () => {
+      if (!processingStartedAtRef.current) return;
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - processingStartedAtRef.current) / 1000)));
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [appState]);
+
+  // Close SSE + revoke preview object URLs on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      if (previewObjectUrlRef.current) {
+        URL.revokeObjectURL(previewObjectUrlRef.current);
+        previewObjectUrlRef.current = null;
+      }
+    };
+  }, []);
+
   // Scroll to bottom of chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, chatLoading]);
 
-  // Load projects from cloud on auth state changes
+  // Load projects from authenticated API (+ optional Firestore/local cache)
   useEffect(() => {
-    if (user) {
-      const fetchCloudProjects = async () => {
-        const cloudProjs = await loadUserProjects(user.uid);
-        if (cloudProjs && cloudProjs.length > 0) {
-          setProjects(cloudProjs);
-          localStorage.setItem('ai_video_translator_projects', JSON.stringify(cloudProjs));
+    if (!user) return;
+    const fetchProjects = async () => {
+      try {
+        const apiProjects = await fetchUserProjectsFromApi();
+        if (apiProjects.length > 0) {
+          const mapped: Project[] = apiProjects.map((p: any) => ({
+            id: p.id,
+            title: p.title || 'Untitled Project',
+            originalLanguage: p.originalLanguage || 'unknown',
+            targetLanguage: p.targetLanguage || '',
+            status: p.status || 'Completed',
+            progress: typeof p.progress === 'number' ? p.progress : 100,
+            size: p.size || '—',
+            duration: p.duration || '—',
+            createdAt: p.createdAt || new Date().toISOString(),
+            videoUrl: p.videoUrl || getProjectVideoUrl(p.id),
+            dubbedUrl: p.downloadUrl || getProjectDownloadUrl(p.id),
+            voiceSettings: voiceSettings,
+            transcript: Array.isArray(p.transcript) ? p.transcript : [],
+            logs: Array.isArray(p.logs) ? p.logs : [],
+            resolution: p.resolution,
+            fps: p.fps,
+            translationModel: p.translationModel,
+            ttsModel: p.ttsModel,
+            processingTime: p.processingTime,
+            processingTimeMs: p.processingTimeMs,
+            completedAt: p.completedAt,
+            voiceKey: p.voice,
+            renders: Array.isArray(p.renders) ? p.renders : [],
+            versions: Array.isArray(p.versions) ? p.versions : [],
+          }));
+          setProjects(mapped);
+          localStorage.setItem('ai_video_translator_projects', JSON.stringify(mapped));
+
+          // Reconnect SSE for in-flight queue jobs after refresh / new session
+          const terminal = new Set(['Completed', 'Failed', 'Unknown']);
+          const running = mapped.filter(
+            (p) => p.id && !terminal.has(String(p.status)) && (p.progress ?? 0) < 100
+          );
+          if (running.length > 0) {
+            const newest = running[0];
+            void startSSEListener(newest.id);
+          }
+          return;
         }
-      };
-      fetchCloudProjects();
-    }
+      } catch (e) {
+        console.warn('API project list failed, trying cache', e);
+      }
+      const cloudProjs = await loadUserProjects(user.uid);
+      if (cloudProjs && cloudProjs.length > 0) {
+        setProjects(cloudProjs);
+        localStorage.setItem('ai_video_translator_projects', JSON.stringify(cloudProjs));
+      }
+    };
+    fetchProjects();
   }, [user]);
+
+  // Refresh signed video URL when entering result view (token for <video src>)
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (appState !== 'result' || !activeProject?.id || activeProject.status !== 'Completed' || !user) {
+        return;
+      }
+      try {
+        const src = await getAuthenticatedProjectVideoUrl(activeProject.id, true);
+        if (!cancelled) setSecureVideoSrc(src);
+      } catch (e) {
+        console.warn('Failed to build authenticated video URL', e);
+      }
+    };
+    load();
+    // Refresh token periodically (~50 min) while watching
+    const timer = window.setInterval(() => {
+      void load();
+    }, 50 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [appState, activeProject?.id, activeProject?.status, user]);
 
   // Handle Google Login
   const handleGoogleLogin = async () => {
     setAuthLoading(true);
+    setUploadError(null);
     try {
-      const authUser = await loginWithGoogleMock();
-      setUser(authUser);
-      localStorage.setItem('luminadub_user', JSON.stringify(authUser));
-    } catch (e) {
-      console.error("Auth failed:", e);
+      await loginWithGoogle();
+      // user state updates via subscribeToAuth
+    } catch (e: any) {
+      console.error('Auth failed:', e);
+      setUploadError(e?.message || 'Google sign-in failed');
     } finally {
       setAuthLoading(false);
     }
   };
 
   // Handle Logout
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await logoutFirebase();
+    } catch (e) {
+      console.error('Logout failed:', e);
+    }
     setUser(null);
+    setSecureVideoSrc('');
     localStorage.removeItem('luminadub_user');
-    // Keep local cache but disconnect cloud sync
   };
 
   // Theme Toggler
@@ -233,7 +558,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     setDetectionConfidence(null);
     
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/detect-language', {
+      const response = await fetch(`${API_BASE}/api/detect-language`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: fileName })
@@ -258,6 +583,11 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     setUploadError(null);
     setVideoMetadata(null);
     setVideoUrlInput('');
+
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
     
     const ext = file.name.split('.').pop()?.toLowerCase();
     const allowed = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
@@ -267,6 +597,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     }
 
     const objectUrl = URL.createObjectURL(file);
+    previewObjectUrlRef.current = objectUrl;
     const video = document.createElement('video');
     video.preload = 'metadata';
     video.muted = true;
@@ -411,12 +742,68 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   };
 
   // SSE job link
-  const startSSEListener = (jobId: string) => {
-    const eventSource = new EventSource(getJobEventsUrl(jobId));
+  const startSSEListener = async (jobId: string) => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
+    const eventsUrl = await getJobEventsUrl(jobId);
+    const eventSource = new EventSource(eventsUrl);
+    eventSourceRef.current = eventSource;
     
     eventSource.onmessage = (event) => {
       try {
         const jobData = JSON.parse(event.data);
+        const stageHistory: string[] = Array.isArray(jobData.stage_history)
+          ? jobData.stage_history
+          : [jobData.stage || jobData.status || 'Upload'];
+        const logs = Array.isArray(jobData.logs) ? jobData.logs : [];
+
+        setPipelineStageHistory(stageHistory);
+        setProcessingLogs(logs);
+
+        const meta = jobData.metadata || {};
+        const isTerminal =
+          jobData.status === 'Completed' || jobData.status === 'Failed';
+        const completedAt =
+          isTerminal
+            ? (jobData.completed_at || new Date().toISOString())
+            : undefined;
+        const createdAt = jobData.created_at || new Date().toISOString();
+
+        const processingTime =
+          jobData.processingTime ||
+          meta.processingTime ||
+          (isTerminal && createdAt && completedAt
+            ? formatProcessingDuration(
+                new Date(completedAt).getTime() - new Date(createdAt).getTime()
+              )
+            : undefined);
+        const processingTimeMs =
+          typeof jobData.processingTimeMs === 'number'
+            ? jobData.processingTimeMs
+            : typeof meta.processingTimeMs === 'number'
+              ? meta.processingTimeMs
+              : undefined;
+
+        const rawTranscript = Array.isArray(jobData.transcript) ? jobData.transcript : [];
+        const mappedTranscript = rawTranscript.map((seg: any, i: number) => ({
+          id: String(seg.id ?? `t${i}`),
+          start: Number(seg.start) || 0,
+          end: Number(seg.end) || 0,
+          text: seg.text || seg.original || '',
+          translatedText: seg.translatedText || seg.translated || '',
+          speaker: seg.speaker || 'Voice',
+          isEdited: Boolean(seg.isEdited),
+          baselineTranslatedText: seg.baselineTranslatedText,
+        }));
+
+        const voiceKey = jobData.voice || meta.voice || resolveApiVoiceKey(defaultVoiceId);
+        const libraryVoice = voiceLibraryCatalog.find(
+          (v) => v.apiVoiceKey === voiceKey || v.name.toLowerCase() === String(voiceKey).toLowerCase()
+        );
+
         const updatedJob: Project = {
           id: jobData.id || jobId,
           title: jobData.title || videoMetadata?.name || 'Translated Video',
@@ -424,23 +811,74 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
           targetLanguage: jobData.targetLanguage || targetLanguageInput,
           status: jobData.status || jobData.stage || 'processing',
           progress: typeof jobData.progress === 'number' ? jobData.progress : 0,
-          size: jobData.metadata?.fileSize || videoMetadata?.size || 'N/A',
-          duration: jobData.metadata?.duration || videoMetadata?.duration || '00:00',
-          createdAt: jobData.created_at || new Date().toISOString(),
-          videoUrl: jobData.videoUrl || '',
-          dubbedUrl: jobData.videoUrl || '',
+          size: meta.outputFileSize || meta.fileSize || videoMetadata?.size || 'N/A',
+          duration: meta.duration || videoMetadata?.duration || '00:00',
+          createdAt,
+          videoUrl:
+            jobData.status === 'Completed'
+              ? getProjectVideoUrl(jobData.id || jobId)
+              : '',
+          dubbedUrl:
+            jobData.status === 'Completed'
+              ? getProjectDownloadUrl(jobData.id || jobId)
+              : '',
           steps: jobData.steps || [],
-          voiceSettings: { ...voiceSettings },
-          transcript: jobData.transcript || [],
-          logs: jobData.logs || [],
+          voiceKey,
+          voiceSettings: libraryVoice
+            ? libraryVoiceToSettings(libraryVoice, voiceSettings)
+            : { ...voiceSettings },
+          transcript: mappedTranscript,
+          logs,
           failureReason: jobData.status === 'Failed' ? (jobData.message || 'Pipeline failed') : undefined,
+          resolution: meta.resolution || videoMetadata?.resolution,
+          fps: meta.fps != null ? Number(meta.fps) : videoMetadata?.fps,
+          translationModel: meta.translationModel || undefined,
+          ttsModel: meta.ttsModel || undefined,
+          processingTime,
+          processingTimeMs,
+          completedAt,
+          renders: [],
+          versions: [],
         };
 
         setProjects(prev => {
           const index = prev.findIndex(p => p.id === updatedJob.id);
           let nextList = [...prev];
           if (index >= 0) {
-            nextList[index] = { ...nextList[index], ...updatedJob };
+            const existing = nextList[index];
+            const keepLocalTranscript =
+              Array.isArray(existing.transcript) &&
+              existing.transcript.some((s) => s.isEdited) &&
+              mappedTranscript.length === 0;
+
+            nextList[index] = {
+              ...existing,
+              ...updatedJob,
+              thumbnailUrl: existing.thumbnailUrl || updatedJob.thumbnailUrl,
+              voiceSettings: existing.voiceSettings || updatedJob.voiceSettings,
+              voiceKey: updatedJob.voiceKey || existing.voiceKey,
+              resolution: updatedJob.resolution || existing.resolution,
+              fps: updatedJob.fps ?? existing.fps,
+              duration: (updatedJob.duration && updatedJob.duration !== '00:00')
+                ? updatedJob.duration
+                : existing.duration,
+              size: (updatedJob.size && updatedJob.size !== 'N/A')
+                ? updatedJob.size
+                : existing.size,
+              translationModel: updatedJob.translationModel || existing.translationModel,
+              ttsModel: updatedJob.ttsModel || existing.ttsModel,
+              processingTime: updatedJob.processingTime || existing.processingTime,
+              processingTimeMs: updatedJob.processingTimeMs ?? existing.processingTimeMs,
+              completedAt: updatedJob.completedAt || existing.completedAt,
+              renders: existing.renders || updatedJob.renders || [],
+              versions: existing.versions || updatedJob.versions || [],
+              transcript: keepLocalTranscript
+                ? existing.transcript
+                : mappedTranscript.length > 0
+                  ? mappedTranscript
+                  : existing.transcript,
+              logs: logs.length > 0 ? logs : existing.logs,
+            };
           } else {
             nextList = [updatedJob, ...prev];
           }
@@ -449,7 +887,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
           
           // Save to Cloud Firestore too if user is logged in
           if (user) {
-            saveUserProject(user.uid, updatedJob);
+            saveUserProject(user.uid, nextList.find(p => p.id === updatedJob.id) || updatedJob);
           }
           return nextList;
         });
@@ -460,9 +898,13 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
         if (jobData.status === 'Completed' || jobData.status === 'Failed') {
           eventSource.close();
+          if (eventSourceRef.current === eventSource) {
+            eventSourceRef.current = null;
+          }
           if (jobData.status === 'Failed') {
             setUploadError(jobData.message || 'Translation failed');
             setAppState('upload');
+            processingStartedAtRef.current = null;
           }
         }
       } catch (e) {
@@ -488,18 +930,42 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     return;
   }
 
+  if (!user) {
+    setUploadError('Sign in with Google to start dubbing. Processing requires authentication.');
+    return;
+  }
+
   setUploadError(null);
   setAppState('processing');
   setUploadProgress(10);
   setUploadingState('Upload');
+  processingStartedAtRef.current = Date.now();
+  setElapsedSeconds(0);
+  setPipelineStageHistory(['Upload']);
+  setProcessingLogs([{
+    id: `log-local-${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    level: 'info',
+    message: 'Upload started. Connecting to pipeline events...',
+    step: 'Upload'
+  }]);
 
   try {
     console.log("📤 About to call translateVideo()");
 
+    const selectedVoiceKey = resolveApiVoiceKey(defaultVoiceId);
+    console.log("🎤 Selected voice key:", selectedVoiceKey);
+
     const startResult = await translateVideo(
       selectedFile,
       targetLanguageInput,
-      "george"
+      selectedVoiceKey,
+      {
+        duration: videoMetadata.duration,
+        resolution: videoMetadata.resolution,
+        fps: videoMetadata.fps,
+        fileSize: videoMetadata.size,
+      }
     );
 
     console.log("📥 translateVideo queued", startResult);
@@ -520,23 +986,35 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
       duration: videoMetadata.duration,
       createdAt: new Date().toISOString(),
       videoUrl: '',
+      thumbnailUrl: videoMetadata.thumbnailUrl,
+      voiceKey: selectedVoiceKey,
       voiceSettings: { ...voiceSettings },
       transcript: [],
       logs: [{
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         level: 'info',
-        message: 'Upload complete. Waiting for pipeline events...',
+        message: `Upload complete. Waiting for pipeline events (voice=${selectedVoiceKey})...`,
         step: 'Upload'
-      }]
+      }],
+      resolution: videoMetadata.resolution,
+      fps: videoMetadata.fps,
+      translationModel: undefined,
+      ttsModel: undefined,
+      renders: [],
+      versions: [],
     };
 
     setProjects(prev => {
       const nextList = [pendingProject, ...prev.filter(p => p.id !== jobId)];
       localStorage.setItem('ai_video_translator_projects', JSON.stringify(nextList));
+      if (user) {
+        saveUserProject(user.uid, pendingProject);
+      }
       return nextList;
     });
     setSelectedProjectId(jobId);
+    setMainView('studio');
     startSSEListener(jobId);
   } catch (err: any) {
     console.error('Translation workflow failed:', err);
@@ -548,6 +1026,10 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
 };
   // Reset core workflow
   const handleResetWorkflow = () => {
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
+    }
     setVideoMetadata(null);
     setVideoUrlInput('');
     setDetectedLanguage(null);
@@ -555,6 +1037,10 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     setUploadProgress(null);
     setAppState('upload');
     setVideoAnalysis(null);
+    processingStartedAtRef.current = null;
+    setElapsedSeconds(0);
+    setPipelineStageHistory(['Upload']);
+    setProcessingLogs([]);
   };
 
   // GEMINI CHATBOT ACTIONS
@@ -577,7 +1063,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
         sysInstruction = "You are Pro Studio Dubbing's XTTS Voice Coach. Give advice on speed, pitch, emotion, and accent alignment rules.";
       }
 
-      const res = await fetch('http://127.0.0.1:8000/api/chat', {
+      const res = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -604,7 +1090,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     setAnalysisLoading(true);
     setVideoAnalysis(null);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/analyze-video', {
+      const res = await fetch(`${API_BASE}/api/analyze-video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -685,7 +1171,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
         reader.readAsDataURL(audioBlob);
       });
 
-      const res = await fetch('http://127.0.0.1:8000/api/transcribe-audio', {
+      const res = await fetch(`${API_BASE}/api/transcribe-audio`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audio: base64data, mimeType: 'audio/webm' })
@@ -716,8 +1202,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
       setLiveStatusText('Connecting to Gemini Live...');
       setLiveCaptions([]);
       try {
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${wsProtocol}//127.0.0.1:8000/live`);
+        const ws = new WebSocket(getWebSocketUrl('/live'));
         liveWsRef.current = ws;
 
         ws.onopen = () => {
@@ -788,18 +1273,27 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const currentStepProgress = activeProject ? activeProject.progress : (uploadProgress || 10);
   const currentStepName = activeProject ? activeProject.status : (uploadingState || 'Preparing...');
 
-  const visualSteps = [
-    { label: 'Uploading Video', range: [0, 15] },
-    { label: 'Extracting Audio', range: [16, 30] },
-    { label: 'Detecting Language', range: [31, 45] },
-    { label: 'Generating Transcript', range: [46, 60] },
-    { label: 'Translating', range: [61, 75] },
-    { label: 'Generating AI Voice', range: [76, 85] },
-    { label: 'Synchronizing Audio', range: [86, 92] },
-    { label: 'Rendering Final Video', range: [93, 98] },
-    { label: 'Preparing Download', range: [99, 99] },
-    { label: 'Completed', range: [100, 100] }
+  const pipelineStages = [
+    { key: 'Upload', label: 'Upload' },
+    { key: 'Audio Extraction', label: 'Audio Extraction' },
+    { key: 'Whisper', label: 'Whisper' },
+    { key: 'Translation', label: 'Translation' },
+    { key: 'TTS', label: 'TTS' },
+    { key: 'Audio Merge', label: 'Audio Merge' },
+    { key: 'Video Rendering', label: 'Video Render' },
+    { key: 'Completed', label: 'Completed' },
   ];
+
+  const formatClock = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+    const secs = (totalSeconds % 60).toString().padStart(2, '0');
+    return `${mins}:${secs}`;
+  };
+
+  const estimatedRemainingSeconds =
+    currentStepProgress > 5 && currentStepProgress < 100 && elapsedSeconds > 0
+      ? Math.max(0, Math.round((elapsedSeconds / currentStepProgress) * (100 - currentStepProgress)))
+      : null;
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 text-zinc-100 flex flex-col transition-colors duration-300 ease-in-out font-sans">
@@ -824,6 +1318,47 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
         {/* Toolbar Controls / Google Auth */}
         <div className="flex items-center gap-3">
+
+          <button
+            type="button"
+            onClick={() =>
+              setMainView(
+                mainView === 'projects' || mainView === 'project-details' ? 'studio' : 'projects'
+              )
+            }
+            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold font-mono transition-all border flex items-center gap-1.5 cursor-pointer ${
+              mainView === 'projects' || mainView === 'project-details'
+                ? 'bg-emerald-500 text-zinc-950 border-emerald-500'
+                : 'bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-100 border-zinc-200/40 dark:border-zinc-800'
+            }`}
+            title="My Projects"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">My Projects</span>
+            {projects.length > 0 && (
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono ${
+                mainView === 'projects' || mainView === 'project-details'
+                  ? 'bg-zinc-950/15'
+                  : 'bg-emerald-500/15 text-emerald-500'
+              }`}>
+                {projects.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMainView(mainView === 'voices' ? 'studio' : 'voices')}
+            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold font-mono transition-all border flex items-center gap-1.5 cursor-pointer ${
+              mainView === 'voices'
+                ? 'bg-emerald-500 text-zinc-950 border-emerald-500'
+                : 'bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-100 border-zinc-200/40 dark:border-zinc-800'
+            }`}
+            title="Voice Library"
+          >
+            <Mic2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Voices</span>
+          </button>
           
           {/* User Sign-In Section */}
           {user ? (
@@ -875,6 +1410,65 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
       {/* TWO-COLUMN PRO STUDIO ENVIRONMENT */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        {mainView === 'voices' ? (
+          <section className="lg:col-span-12">
+            <VoiceLibrary
+              voices={voiceLibraryCatalog}
+              favoriteIds={favoriteVoiceIds}
+              defaultVoiceId={defaultVoiceId}
+              onToggleFavorite={handleToggleFavoriteVoice}
+              onSetDefault={handleSetDefaultVoice}
+              onBackToStudio={() => {
+                setMainView('studio');
+                setAppState('upload');
+              }}
+            />
+          </section>
+        ) : mainView === 'project-details' && activeProject ? (
+          <section className="lg:col-span-12">
+            <ProjectDetails
+              project={activeProject}
+              onBack={() => setMainView('projects')}
+              onPreview={handlePreviewProject}
+              onDownload={handleDownloadProject}
+              onSaveTranscript={handleSaveTranscript}
+            />
+          </section>
+        ) : mainView === 'project-details' && !activeProject ? (
+          <section className="lg:col-span-12">
+            <ProjectsDashboard
+              projects={projects}
+              activeProjectId={selectedProjectId}
+              onPreview={handlePreviewProject}
+              onDownload={handleDownloadProject}
+              onDelete={handleDeleteProject}
+              onDuplicate={handleDuplicateProject}
+              onOpenDetails={handleOpenProjectDetails}
+              onBackToStudio={() => {
+                setMainView('studio');
+                setAppState('upload');
+              }}
+            />
+          </section>
+        ) : mainView === 'projects' ? (
+          <section className="lg:col-span-12">
+            <ProjectsDashboard
+              projects={projects}
+              activeProjectId={selectedProjectId}
+              onPreview={handlePreviewProject}
+              onDownload={handleDownloadProject}
+              onDelete={handleDeleteProject}
+              onDuplicate={handleDuplicateProject}
+              onOpenDetails={handleOpenProjectDetails}
+              onBackToStudio={() => {
+                setMainView('studio');
+                setAppState('upload');
+              }}
+            />
+          </section>
+        ) : (
+        <>
         
         {/* LEFT COLUMN: PRIMARY DUBBING WORKFLOW */}
         <section className="lg:col-span-7 xl:col-span-8 flex flex-col justify-center">
@@ -1067,6 +1661,28 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                         </div>
                       </div>
 
+                      {/* Default voice from Voice Library — passed to FastAPI / ElevenLabs */}
+                      <div className="bg-zinc-50/50 dark:bg-zinc-950/20 border border-zinc-200/40 dark:border-zinc-900 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block">
+                            Default Project Voice
+                          </span>
+                          <p className="text-xs font-bold text-zinc-900 dark:text-white truncate mt-0.5">
+                            {voiceSettings.voiceName}
+                            <span className="text-zinc-400 font-mono font-normal ml-1.5">
+                              · {resolveApiVoiceKey(defaultVoiceId)}
+                            </span>
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setMainView('voices')}
+                          className="px-3 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-emerald-500/40 cursor-pointer flex-shrink-0"
+                        >
+                          Voice Library
+                        </button>
+                      </div>
+
                       {/* Form Actions */}
                       <div className="pt-2 flex items-center gap-3">
                         <button
@@ -1134,23 +1750,38 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                 {/* Status Messages */}
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold text-zinc-900 dark:text-white font-mono uppercase tracking-wider">
-                    {currentStepName}
+                    {currentStepName === 'Video Rendering' ? 'Video Render' : currentStepName}
                   </h3>
-                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono uppercase tracking-widest">
-                    Est. {currentStepProgress >= 90 ? '2 seconds' : `${Math.ceil((100 - currentStepProgress) * 0.15)} seconds`} remaining
-                  </p>
+                  <div className="flex items-center justify-center gap-4 text-[10px] text-zinc-400 dark:text-zinc-500 font-mono uppercase tracking-widest">
+                    <span>Elapsed {formatClock(elapsedSeconds)}</span>
+                    <span>
+                      {currentStepProgress >= 100
+                        ? 'Done'
+                        : estimatedRemainingSeconds === null
+                          ? 'Est. calculating…'
+                          : `Est. ${formatClock(estimatedRemainingSeconds)} remaining`}
+                    </span>
+                  </div>
                 </div>
 
-                {/* Step checklist */}
+                {/* Real pipeline stage checklist */}
                 <div className="max-w-md mx-auto bg-zinc-50/50 dark:bg-zinc-950/20 rounded-2xl p-4 border border-zinc-200/30 dark:border-zinc-900 text-left space-y-2.5">
-                  {visualSteps.map((step, index) => {
-                    const [min, max] = step.range;
-                    const isCompleted = currentStepProgress > max || (currentStepProgress === 100);
-                    const isCurrent = currentStepProgress >= min && currentStepProgress <= max && currentStepProgress < 100;
+                  {pipelineStages.map((step) => {
+                    const orderKeys = pipelineStages.map((s) => s.key);
+                    const currentKey = orderKeys.includes(currentStepName)
+                      ? currentStepName
+                      : (pipelineStageHistory[pipelineStageHistory.length - 1] || 'Upload');
+                    const currentOrder = orderKeys.indexOf(currentKey);
+                    const stepOrder = orderKeys.indexOf(step.key);
+                    const isCompleted =
+                      currentStepProgress >= 100 ||
+                      (stepOrder >= 0 && currentOrder > stepOrder);
+                    const isCurrent =
+                      currentStepProgress < 100 && stepOrder === currentOrder;
                     
                     return (
                       <div 
-                        key={index} 
+                        key={step.key} 
                         className={`flex items-center justify-between text-[11px] font-mono transition-opacity ${
                           isCompleted ? 'text-zinc-400 dark:text-zinc-500' : isCurrent ? 'text-emerald-500 font-bold' : 'text-zinc-300 dark:text-zinc-700'
                         }`}
@@ -1171,6 +1802,22 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Live processing logs from SSE */}
+                <div className="max-w-md mx-auto bg-zinc-950 text-left rounded-2xl border border-zinc-800 p-3 max-h-[140px] overflow-y-auto space-y-1.5">
+                  <p className="text-[9px] font-mono text-emerald-500 uppercase tracking-widest font-bold px-1">Processing Logs</p>
+                  {(processingLogs.length > 0 ? processingLogs : activeProject?.logs || []).slice(-12).map((log) => (
+                    <div key={log.id} className="px-1">
+                      <p className="text-[10px] font-mono text-zinc-500 leading-snug">
+                        <span className="text-zinc-600">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                        {' '}
+                        <span className={log.level === 'error' ? 'text-rose-400' : 'text-zinc-300'}>
+                          [{log.step || 'pipeline'}] {log.message}
+                        </span>
+                      </p>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="pt-2">
@@ -1208,7 +1855,12 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                 {/* cinematic Video Player */}
                 <div className="aspect-video w-full bg-zinc-950 rounded-2xl overflow-hidden relative border border-zinc-200/50 dark:border-zinc-900 shadow-sm">
                   <video
-                    src={activeProject?.videoUrl || 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4'}
+                    src={
+                      secureVideoSrc ||
+                      (activeProject
+                        ? resolveProjectMediaUrl(activeProject, 'video')
+                        : 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4')
+                    }
                     className="w-full h-full object-contain"
                     controls
                     autoPlay
@@ -1216,55 +1868,25 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                   />
                 </div>
 
-                {/* Timeline / Transcript segment list */}
-                {activeProject?.transcript && activeProject.transcript.length > 0 && (
-                  <div className="bg-white dark:bg-zinc-900/30 border border-zinc-200/50 dark:border-zinc-900 rounded-2xl p-5 space-y-3">
-                    <h4 className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <FileText className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>Speech Timelines Alignment</span>
-                    </h4>
-                    <div className="space-y-2.5 max-h-[160px] overflow-y-auto pr-2">
-                      {activeProject.transcript.map(seg => (
-                        <div key={seg.id} className="text-left bg-zinc-50 dark:bg-zinc-950/40 p-3 rounded-xl border border-zinc-200/30 dark:border-zinc-850/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <div className="space-y-1 max-w-[85%]">
-                            <span className="text-[9px] font-mono bg-zinc-100 dark:bg-zinc-900 text-zinc-500 border border-zinc-200 dark:border-zinc-800 px-1.5 py-0.5 rounded">
-                              {seg.speaker || 'Voice'} ({seg.start.toFixed(1)}s - {seg.end.toFixed(1)}s)
-                            </span>
-                            <p className="text-[11px] text-zinc-400 leading-normal italic">"{seg.text}"</p>
-                            <p className="text-[12px] text-emerald-500 font-medium leading-normal">➔ "{seg.translatedText}"</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                {/* Timeline Transcript Editor */}
+                {activeProject && (
+                  <TranscriptEditor
+                    project={activeProject}
+                    onSaveTranscript={handleSaveTranscript}
+                  />
                 )}
 
                 {/* Core actions */}
                 <div className="space-y-3">
                   <a
-                    href={activeProject?.videoUrl || '#'}
+                    href="#"
                     download={`${activeProject?.title || 'dubbed_video'}.mp4`}
                     target="_blank"
                     rel="noreferrer"
                     onClick={async (e) => {
-                      if (!activeProject?.videoUrl) return;
+                      if (!activeProject) return;
                       e.preventDefault();
-                      try {
-                        const res = await fetch(activeProject.videoUrl);
-                        if (!res.ok) throw new Error('Download failed');
-                        const blob = await res.blob();
-                        const objectUrl = URL.createObjectURL(blob);
-                        const link = document.createElement('a');
-                        link.href = objectUrl;
-                        link.download = `${activeProject.title || 'dubbed_video'}.mp4`;
-                        document.body.appendChild(link);
-                        link.click();
-                        link.remove();
-                        URL.revokeObjectURL(objectUrl);
-                      } catch (err) {
-                        console.error('Download failed:', err);
-                        window.open(activeProject.videoUrl, '_blank', 'noopener,noreferrer');
-                      }
+                      await handleDownloadProject(activeProject);
                     }}
                     className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-extrabold text-xs font-sans rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
                   >
@@ -1618,6 +2240,9 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
             </div>
           </div>
         </section>
+
+        </>
+        )}
 
       </main>
 

@@ -7,6 +7,7 @@ except ImportError:  # pragma: no cover - runtime fallback for missing dependenc
 
 from config import (
     ELEVENLABS_API_KEY,
+    ELEVENLABS_MODEL,
     OUTPUT_DIR,
     DEFAULT_VOICE_ID,
     VOICE_MAP,
@@ -56,15 +57,21 @@ def generate_speech(
 
     filepath = os.path.join(OUTPUT_DIR, filename)
 
-    voice_id = VOICE_MAP.get(
-        voice.lower(),
-        DEFAULT_VOICE_ID,
-    )
+    voice_key = (voice or "george").strip().lower()
+    voice_id = VOICE_MAP.get(voice_key)
+
+    # Allow raw ElevenLabs voice IDs to pass through
+    if not voice_id and len(voice_key) >= 20 and voice_key.replace("_", "").isalnum():
+        voice_id = voice
+    if not voice_id or voice_id.startswith("YOUR_"):
+        voice_id = DEFAULT_VOICE_ID
+
+    print(f"[ElevenLabs] Using voice key={voice_key!r} voice_id={voice_id!r}")
 
     audio = client.generate(
         text=text,
         voice=voice_id,
-        model="eleven_multilingual_v2",
+        model=ELEVENLABS_MODEL,
     )
 
     with open(filepath, "wb") as f:

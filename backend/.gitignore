@@ -10,5 +10,12 @@ __pycache__/
 # Environment
 .env
 
+# Generated media (do not serve publicly; use /api/projects/... streaming)
+outputs/
+temp/
+
+# Local SQLite / app data
+data/
+
 # Node
 node_modules/

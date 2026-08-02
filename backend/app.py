@@ -1,6 +1,8 @@
+from contextlib import asynccontextmanager
+
 from services.tts_service import generate_speech
 from services.pipeline_service import process_video
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Body, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Body, Request
 import tempfile
 import shutil
 import os
@@ -10,45 +12,111 @@ from services.video_renderer_service import replace_audio
 from services.whisper_service import detect_language, transcribe_audio
 from services.ffmpeg_service import extract_audio
 from services.elevenlabs_service import get_all_voices, generate_speech
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import json
 
+from config import CORS_ORIGINS, TEMP_DIR
+from services.secure_media_service import resolve_project_media
+from services.firebase_auth import require_authenticated_user
 from services.job_service import (
     create_job,
     update_job,
     finish_job,
     fail_job,
     get_job,
+    delete_job,
+    jobs as job_store,
 )
+from services.output_registry import delete_project_output, secure_video_url, secure_download_url
+from services.db import init_db
+from services.project_repository import list_projects_by_owner
+from services.health_service import run_startup_checks, run_checks
+from services.logging_service import configure_logging, get_logger
+from services.metrics_service import metrics_payload
+from services.observability_middleware import ObservabilityMiddleware
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    configure_logging()
+    log = get_logger("screen_ai.startup")
+    try:
+        init_db()
+    except Exception as db_exc:
+        log.warning("database init failed: %s", db_exc)
+    try:
+        from services.job_runner import process_queued_job
+        from services.queue_service import set_inline_handler, resolve_backend
+
+        set_inline_handler(process_queued_job)
+        log.info("queue backend=%s", resolve_backend(), extra={"event": "queue_backend"})
+    except Exception as q_exc:
+        log.warning("queue setup warning: %s", q_exc)
+    try:
+        _app.state.startup_checks = run_startup_checks()
+    except Exception as start_exc:
+        log.error("Startup checks aborted: %s", start_exc)
+        raise
+    yield
+
 
 app = FastAPI(
-    
     title="LuminaDub Backend",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
+# Observability outermost so all requests get IDs + metrics (CORS still applies inside)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+app.add_middleware(ObservabilityMiddleware)
 
-app.mount(
-    "/outputs",
-    StaticFiles(directory="outputs"),
-    name="outputs",
-)
+# Public /outputs static mount removed — use /api/projects/{id}/video|download
+
 
 @app.get("/")
 def home():
     return {
         "status": "Backend Running",
-        "app": "LuminaDub AI"
+        "app": "LuminaDub AI",
     }
+
+
+@app.get("/health")
+def health_live():
+    """Liveness probe — process is up."""
+    return {"status": "ok", "service": "screen-ai-api"}
+
+
+@app.get("/ready")
+def health_ready():
+    """Readiness probe — required dependencies available."""
+    # Whisper already loaded with the app; include it in readiness.
+    result = run_checks(include_whisper=True)
+    code = 200 if result["ok"] else 503
+    return JSONResponse(status_code=code, content={"status": "ready" if result["ok"] else "not_ready", **result})
+
+
+@app.get("/health/detailed")
+def health_detailed():
+    """Detailed dependency report (same payload as readiness)."""
+    result = run_checks(include_whisper=True)
+    code = 200 if result["ok"] else 503
+    return JSONResponse(status_code=code, content=result)
+
+
+@app.get("/metrics")
+def prometheus_metrics():
+    """Prometheus scrape endpoint (Grafana-ready)."""
+    body, content_type = metrics_payload()
+    return Response(content=body, media_type=content_type)
 
 @app.post("/job")
 def new_job():
@@ -199,68 +267,336 @@ async def analyze_video_api(payload: dict = Body(...)):
 
 @app.post("/process-video")
 async def process_video_api(
-    background_tasks: BackgroundTasks,
+    request: Request,
     target_lang: str = "en",
     voice: str = "george",
+    duration: str = "",
+    resolution: str = "",
+    fps: str = "",
+    file_size: str = "",
     file: UploadFile = File(...)
 ):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
-        shutil.copyfileobj(file.file, temp)
-        video_path = temp.name
+    allowed_ext = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    original_name = file.filename or "upload.mp4"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in allowed_ext:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": f"Unsupported file type '{ext or 'unknown'}'. Allowed: {', '.join(sorted(allowed_ext))}"
+            },
+        )
 
+    max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(500 * 1024 * 1024)))
+    user = require_authenticated_user(request)
+    owner_id = user.uid
+
+    # Create job first so we can stream the upload once into a durable worker path
+    os.makedirs(TEMP_DIR, exist_ok=True)
     job_id = create_job(
-        title=file.filename or "Uploaded Video",
+        title=os.path.basename(original_name) or "Uploaded Video",
         target_language=target_lang,
+        voice=voice,
+        owner_id=owner_id,
         metadata={
-            "fileName": file.filename or "upload.mp4",
-            "fileSize": str(getattr(file, "size", "") or "N/A"),
+            "fileName": os.path.basename(original_name) or "upload.mp4",
+            "fileSize": file_size or "N/A",
+            "duration": duration or "",
+            "resolution": resolution or "",
+            "fps": None,
+            "voice": voice,
+            "owner_id": owner_id,
         },
     )
+    video_path = os.path.join(TEMP_DIR, f"{job_id}{ext or '.mp4'}")
+    try:
+        with open(video_path, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+    except Exception:
+        if os.path.exists(video_path):
+            os.remove(video_path)
+        fail_job(job_id, RuntimeError("Failed to persist upload"))
+        return JSONResponse(status_code=500, content={"error": "Failed to save upload.", "job_id": job_id})
+
+    try:
+        actual_size = os.path.getsize(video_path)
+    except OSError:
+        actual_size = 0
+
+    if actual_size <= 0:
+        if os.path.exists(video_path):
+            os.remove(video_path)
+        fail_job(job_id, ValueError("Uploaded file is empty."))
+        return JSONResponse(status_code=400, content={"error": "Uploaded file is empty.", "job_id": job_id})
+
+    if actual_size > max_upload_bytes:
+        if os.path.exists(video_path):
+            os.remove(video_path)
+        fail_job(job_id, ValueError("File too large"))
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": f"File too large ({actual_size} bytes). Max allowed is {max_upload_bytes} bytes.",
+                "job_id": job_id,
+            },
+        )
+
+    upload_size = file_size or f"{actual_size / (1024 * 1024):.1f} MB"
+
+    fps_value = None
+    if fps:
+        try:
+            fps_value = float(fps)
+        except ValueError:
+            fps_value = None
+
+    # Patch metadata now that size/fps are known
+    job = get_job(job_id)
+    if job:
+        meta = job.setdefault("metadata", {})
+        meta["fileSize"] = upload_size
+        meta["fps"] = fps_value
+        meta["duration"] = duration or meta.get("duration") or ""
+        meta["resolution"] = resolution or meta.get("resolution") or ""
+
     update_job(
         job_id,
         stage="Upload",
+        status="queued",
         progress=10,
-        message="Upload complete. Queued for processing.",
+        message=f"Upload complete. Queued for processing (voice={voice}).",
     )
 
-    def run_job():
-        """Runs in a worker thread after the HTTP response is sent."""
-        try:
-            def on_progress(stage, message=""):
-                update_job(job_id, stage=stage, message=message)
+    from services.queue_service import enqueue_job
 
-            result = asyncio.run(
-                process_video(
-                    video_path=video_path,
-                    target_language=target_lang,
-                    voice=voice,
-                    on_progress=on_progress,
-                )
-            )
-            finish_job(job_id, result)
-        except Exception as exc:
-            fail_job(job_id, exc)
-        finally:
-            if os.path.exists(video_path):
-                os.remove(video_path)
-
-    background_tasks.add_task(run_job)
+    try:
+        enqueue_meta = enqueue_job(
+            {
+                "job_id": job_id,
+                "video_path": video_path,
+                "target_language": target_lang,
+                "voice": voice,
+                "attempt": 0,
+            }
+        )
+    except Exception as enqueue_exc:
+        if os.path.exists(video_path):
+            os.remove(video_path)
+        fail_job(job_id, enqueue_exc)
+        return JSONResponse(
+            status_code=503,
+            content={"error": f"Failed to enqueue job: {enqueue_exc}", "job_id": job_id},
+        )
 
     return JSONResponse(
         {
             "job_id": job_id,
             "status": "queued",
-            "message": "Processing started in background",
+            "message": "Processing queued",
+            "voice": voice,
+            "queue": enqueue_meta.get("backend"),
         }
     )
+
+
+@app.get("/api/projects/{project_id}/video")
+async def stream_project_video(project_id: str, request: Request):
+    """Auth gate then redirect to signed URL (S3) or stream local file."""
+    media = resolve_project_media(project_id, request, disposition="inline")
+    if media.get("signed_url"):
+        return RedirectResponse(
+            url=media["signed_url"],
+            status_code=302,
+            headers={"Cache-Control": "private, no-store"},
+        )
+    if not media.get("path"):
+        return JSONResponse(status_code=404, content={"detail": "Output video file not found."})
+    return FileResponse(
+        path=media["path"],
+        media_type="video/mp4",
+        filename=media["filename"],
+        content_disposition_type="inline",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/api/projects/{project_id}/download")
+async def download_project_video(project_id: str, request: Request):
+    """Auth gate then signed download URL (S3) or local attachment stream."""
+    media = resolve_project_media(project_id, request, disposition="attachment")
+    download_name = media["title"]
+    if not str(download_name).lower().endswith(".mp4"):
+        download_name = f"{download_name}.mp4"
+    download_name = os.path.basename(str(download_name).replace("\\", "/")) or media["filename"]
+    if media.get("signed_url"):
+        return RedirectResponse(
+            url=media["signed_url"],
+            status_code=302,
+            headers={"Cache-Control": "private, no-store"},
+        )
+    if not media.get("path"):
+        return JSONResponse(status_code=404, content={"detail": "Output video file not found."})
+    return FileResponse(
+        path=media["path"],
+        media_type="video/mp4",
+        filename=download_name,
+        content_disposition_type="attachment",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/api/projects")
+async def list_projects(request: Request):
+    """List projects owned by the authenticated user (database-backed)."""
+    user = require_authenticated_user(request)
+    projects = list_projects_by_owner(user.uid)
+
+    # Merge any in-memory jobs not yet flushed / mid-flight
+    seen = {p.get("id") for p in projects}
+    for job_id, job in list(job_store.items()):
+        if job.get("owner_id") != user.uid:
+            continue
+        if job_id in seen:
+            # Prefer freshest in-memory progress for active jobs
+            for i, p in enumerate(projects):
+                if p.get("id") == job_id and job.get("status") not in ("Completed", "Failed"):
+                    projects[i] = {
+                        **p,
+                        "status": job.get("status"),
+                        "progress": job.get("progress", p.get("progress")),
+                        "transcript": job.get("transcript") or p.get("transcript") or [],
+                        "timeline": job.get("timeline") or p.get("timeline") or [],
+                        "logs": job.get("logs") or p.get("logs") or [],
+                    }
+            continue
+        projects.append(
+            {
+                "id": job_id,
+                "title": job.get("title") or "Untitled Project",
+                "status": job.get("status") or "Unknown",
+                "owner_id": job.get("owner_id"),
+                "createdAt": job.get("created_at"),
+                "completedAt": job.get("completed_at"),
+                "originalLanguage": job.get("sourceLanguage"),
+                "targetLanguage": job.get("targetLanguage"),
+                "voice": job.get("voice"),
+                "duration": (job.get("metadata") or {}).get("duration"),
+                "size": (job.get("metadata") or {}).get("fileSize"),
+                "resolution": (job.get("metadata") or {}).get("resolution"),
+                "fps": (job.get("metadata") or {}).get("fps"),
+                "translationModel": (job.get("metadata") or {}).get("translationModel"),
+                "ttsModel": (job.get("metadata") or {}).get("ttsModel"),
+                "processingTime": job.get("processingTime"),
+                "processingTimeMs": job.get("processingTimeMs"),
+                "videoUrl": job.get("videoUrl") or secure_video_url(job_id),
+                "downloadUrl": job.get("downloadUrl") or secure_download_url(job_id),
+                "progress": job.get("progress", 0),
+                "transcript": job.get("transcript") or [],
+                "timeline": job.get("timeline") or [],
+                "logs": job.get("logs") or [],
+            }
+        )
+
+    # Ensure secure URLs present
+    for p in projects:
+        pid = p.get("id")
+        if pid and not p.get("videoUrl"):
+            p["videoUrl"] = secure_video_url(pid)
+        if pid and not p.get("downloadUrl"):
+            p["downloadUrl"] = secure_download_url(pid)
+
+    projects.sort(key=lambda r: r.get("createdAt") or r.get("completedAt") or "", reverse=True)
+    return {"projects": projects}
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project_detail(project_id: str, request: Request):
+    """Fetch a single project (metadata + transcript/timeline/logs) for the owner."""
+    user = require_authenticated_user(request)
+    job = get_job(project_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"detail": "Project not found"})
+    owner = job.get("owner_id") or (job.get("metadata") or {}).get("owner_id")
+    if owner != user.uid:
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    meta = job.get("metadata") or {}
+    return {
+        "id": job["id"],
+        "title": job.get("title") or "Untitled Project",
+        "status": job.get("status"),
+        "owner_id": owner,
+        "createdAt": job.get("created_at"),
+        "completedAt": job.get("completed_at"),
+        "originalLanguage": job.get("sourceLanguage"),
+        "targetLanguage": job.get("targetLanguage"),
+        "voice": job.get("voice"),
+        "duration": meta.get("duration"),
+        "size": meta.get("fileSize"),
+        "resolution": meta.get("resolution"),
+        "fps": meta.get("fps"),
+        "translationModel": meta.get("translationModel"),
+        "ttsModel": meta.get("ttsModel"),
+        "processingTime": job.get("processingTime"),
+        "processingTimeMs": job.get("processingTimeMs"),
+        "videoUrl": job.get("videoUrl") or secure_video_url(project_id),
+        "downloadUrl": job.get("downloadUrl") or secure_download_url(project_id),
+        "progress": job.get("progress", 0),
+        "transcript": job.get("transcript") or [],
+        "timeline": job.get("timeline") or job.get("transcript") or [],
+        "logs": job.get("logs") or [],
+        "storage_provider": job.get("storage_provider"),
+        "storage_key": job.get("storage_key"),
+    }
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str, request: Request):
+    """Delete a project owned by the authenticated user."""
+    user = require_authenticated_user(request)
+
+    job = get_job(project_id)
+    found = bool(job)
+    if job:
+        owner = job.get("owner_id") or (job.get("metadata") or {}).get("owner_id")
+        if owner != user.uid:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
+    try:
+        delete_job(project_id, owner_id=user.uid)
+    except PermissionError:
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
+    try:
+        delete_project_output(project_id, user.uid, delete_file=True)
+        found = True
+    except FileNotFoundError:
+        pass
+    except PermissionError:
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    except ValueError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid project id"})
+
+    if not found:
+        return JSONResponse(status_code=404, content={"detail": "Project not found"})
+
+    return {"ok": True, "id": project_id}
 
 
 @app.get("/events/{job_id}")
 async def job_events(job_id: str):
     async def event_stream():
         sent_history = 0
+        last_fingerprint = None
         while True:
-            job = get_job(job_id)
+            # Refresh from DB so Redis worker progress is visible across processes
+            job = get_job(job_id, refresh=True)
             if not job:
                 yield f"data: {json.dumps({'id': job_id, 'status': 'Failed', 'message': 'Job not found', 'progress': 0})}\n\n"
                 break
@@ -274,9 +610,14 @@ async def job_events(job_id: str):
                 snapshot = dict(job)
                 snapshot["stage"] = stage
                 if job.get("status") not in ("Completed", "Failed"):
-                    snapshot["status"] = stage
-                    snapshot["progress"] = STAGE_PROGRESS.get(stage, job.get("progress", 0))
-                    snapshot["message"] = stage
+                    if job.get("status") in ("queued", "processing") and stage == "Upload":
+                        snapshot["status"] = job.get("status")
+                        snapshot["progress"] = job.get("progress", STAGE_PROGRESS.get(stage, 0))
+                        snapshot["message"] = job.get("message") or stage
+                    else:
+                        snapshot["status"] = stage
+                        snapshot["progress"] = STAGE_PROGRESS.get(stage, job.get("progress", 0))
+                        snapshot["message"] = job.get("message") or stage
                 elif stage != "Completed" and stage != "Failed":
                     snapshot["status"] = stage
                     snapshot["progress"] = STAGE_PROGRESS.get(stage, job.get("progress", 0))
@@ -287,7 +628,25 @@ async def job_events(job_id: str):
                     snapshot["message"] = job.get("message", stage)
 
                 yield f"data: {json.dumps(snapshot)}\n\n"
+                last_fingerprint = (
+                    snapshot.get("status"),
+                    snapshot.get("progress"),
+                    snapshot.get("message"),
+                    len(history),
+                )
                 sent_history += 1
+
+            # Re-emit when status/progress changes without a new stage (queued → processing)
+            fingerprint = (
+                job.get("status"),
+                job.get("progress"),
+                job.get("message"),
+                len(history),
+            )
+            if sent_history >= len(history) and fingerprint != last_fingerprint:
+                snapshot = dict(job)
+                yield f"data: {json.dumps(snapshot)}\n\n"
+                last_fingerprint = fingerprint
 
             if job.get("status") in ("Completed", "Failed") and sent_history >= len(history):
                 break
@@ -355,26 +714,37 @@ async def render_video(
     video: UploadFile = File(...),
     audio: UploadFile = File(...)
 ):
-    import os
-    import shutil
     import uuid
 
-    temp_dir = "temp"
+    temp_dir = TEMP_DIR
     os.makedirs(temp_dir, exist_ok=True)
 
-    video_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{video.filename}")
-    audio_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{audio.filename}")
+    safe_video_name = os.path.basename(video.filename or "video.mp4") or "video.mp4"
+    safe_audio_name = os.path.basename(audio.filename or "audio.mp3") or "audio.mp3"
+    if ".." in safe_video_name or ".." in safe_audio_name:
+        return JSONResponse(status_code=400, content={"error": "Invalid filename."})
 
-    with open(video_path, "wb") as buffer:
-        shutil.copyfileobj(video.file, buffer)
+    video_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{safe_video_name}")
+    audio_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{safe_audio_name}")
 
-    with open(audio_path, "wb") as buffer:
-        shutil.copyfileobj(audio.file, buffer)
+    try:
+        with open(video_path, "wb") as buffer:
+            shutil.copyfileobj(video.file, buffer)
 
-    output_video = replace_audio(video_path, audio_path)
+        with open(audio_path, "wb") as buffer:
+            shutil.copyfileobj(audio.file, buffer)
 
-    return FileResponse(
-        output_video,
-        media_type="video/mp4",
-        filename="translated_video.mp4"
-    ),
+        output_video = replace_audio(video_path, audio_path)
+
+        return FileResponse(
+            output_video,
+            media_type="video/mp4",
+            filename="translated_video.mp4"
+        )
+    finally:
+        for path in (video_path, audio_path):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass

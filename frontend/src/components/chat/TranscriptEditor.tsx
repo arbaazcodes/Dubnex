@@ -1,273 +1,276 @@
-import React, { useState } from 'react';
-import { Edit2, Check, RefreshCw, Volume2, Save, User2, Play, Plus, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Clock, RefreshCw, RotateCcw, Save, Pencil, Sparkles } from 'lucide-react';
 import { Project, TranscriptSegment } from '../../types';
 
 interface TranscriptEditorProps {
-  project: Project | null;
-  onUpdateTranscript: (updatedTranscript: TranscriptSegment[]) => void;
-  onRegenerateVoice: () => void;
-  isRegenerating: boolean;
+  project: Project;
+  onSaveTranscript: (updatedTranscript: TranscriptSegment[]) => void;
+  onRegenerateSegment?: (segmentId: string) => void;
+  /** Live draft updates so Timeline can mirror edits before Save */
+  onDraftChange?: (draft: TranscriptSegment[]) => void;
 }
 
-export default function TranscriptEditor({ project, onUpdateTranscript, onRegenerateVoice, isRegenerating }: TranscriptEditorProps) {
-  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
-  const [editOriginalText, setEditOriginalText] = useState('');
-  const [editTranslatedText, setEditTranslatedText] = useState('');
-  const [editSpeaker, setEditSpeaker] = useState('');
-  const [editStart, setEditStart] = useState(0);
-  const [editEnd, setEditEnd] = useState(0);
+function normalizeSegments(segments: TranscriptSegment[]): TranscriptSegment[] {
+  return segments.map((seg) => ({
+    ...seg,
+    baselineTranslatedText:
+      seg.baselineTranslatedText !== undefined
+        ? seg.baselineTranslatedText
+        : seg.translatedText,
+    isEdited: Boolean(seg.isEdited),
+  }));
+}
 
-  if (!project) {
-    return (
-      <div 
-        className="bg-white dark:bg-zinc-900/60 backdrop-blur-md border border-zinc-200 dark:border-zinc-800/80 rounded-2xl p-8 text-center shadow-sm dark:shadow-none" 
-        id="empty-transcript-editor"
-      >
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Select a project to load the interactive Dual Transcript Editor.</p>
-      </div>
-    );
-  }
+export default function TranscriptEditor({
+  project,
+  onSaveTranscript,
+  onRegenerateSegment,
+  onDraftChange,
+}: TranscriptEditorProps) {
+  const [draft, setDraft] = useState<TranscriptSegment[]>(() =>
+    normalizeSegments(project.transcript || [])
+  );
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [regenNotice, setRegenNotice] = useState<string | null>(null);
 
-  const startEditing = (seg: TranscriptSegment) => {
-    setEditingSegmentId(seg.id);
-    setEditOriginalText(seg.text);
-    setEditTranslatedText(seg.translatedText);
-    setEditSpeaker(seg.speaker || 'Speaker');
-    setEditStart(seg.start);
-    setEditEnd(seg.end);
-  };
+  useEffect(() => {
+    setDraft(normalizeSegments(project.transcript || []));
+    setEditingId(null);
+    setSaveNotice(null);
+  }, [project.id, project.transcript]);
 
-  const saveEditing = (id: string) => {
-    const updated = project.transcript.map((seg) => {
-      if (seg.id === id) {
+  useEffect(() => {
+    onDraftChange?.(draft);
+  }, [draft, onDraftChange]);
+
+  const hasUnsavedChanges = useMemo(() => {
+    const persisted = normalizeSegments(project.transcript || []);
+    if (persisted.length !== draft.length) return true;
+    return draft.some((seg, i) => {
+      const p = persisted[i];
+      return (
+        !p ||
+        p.id !== seg.id ||
+        p.translatedText !== seg.translatedText ||
+        Boolean(p.isEdited) !== Boolean(seg.isEdited)
+      );
+    });
+  }, [draft, project.transcript]);
+
+  const unsavedCount = useMemo(() => {
+    const persisted = normalizeSegments(project.transcript || []);
+    return draft.filter((seg) => {
+      const p = persisted.find((x) => x.id === seg.id);
+      return !p || p.translatedText !== seg.translatedText || Boolean(p.isEdited) !== Boolean(seg.isEdited);
+    }).length;
+  }, [draft, project.transcript]);
+
+  const updateTranslated = (id: string, value: string) => {
+    setDraft((prev) =>
+      prev.map((seg) => {
+        if (seg.id !== id) return seg;
+        const baseline = seg.baselineTranslatedText ?? seg.translatedText;
         return {
           ...seg,
-          text: editOriginalText,
-          translatedText: editTranslatedText,
-          speaker: editSpeaker,
-          start: editStart,
-          end: editEnd
+          translatedText: value,
+          isEdited: value !== baseline,
         };
-      }
-      return seg;
+      })
+    );
+  };
+
+  const handleSave = () => {
+    const next = draft.map((seg) => {
+      const baseline = seg.baselineTranslatedText ?? seg.translatedText;
+      return {
+        ...seg,
+        baselineTranslatedText: baseline,
+        isEdited: seg.translatedText !== baseline,
+      };
     });
-    onUpdateTranscript(updated);
-    setEditingSegmentId(null);
+    onSaveTranscript(next);
+    setDraft(next);
+    setEditingId(null);
+    setSaveNotice('Transcript edits saved to project.');
+    window.setTimeout(() => setSaveNotice(null), 2500);
   };
 
-  const deleteSegment = (id: string) => {
-    const filtered = project.transcript.filter((seg) => seg.id !== id);
-    onUpdateTranscript(filtered);
+  const handleRevert = () => {
+    const reverted = draft.map((seg) => {
+      const baseline = seg.baselineTranslatedText ?? seg.translatedText;
+      return {
+        ...seg,
+        translatedText: baseline,
+        isEdited: false,
+      };
+    });
+    setDraft(reverted);
+    onSaveTranscript(reverted);
+    setEditingId(null);
+    setSaveNotice('All segment translations reverted.');
+    window.setTimeout(() => setSaveNotice(null), 2500);
   };
 
-  const addSegment = () => {
-    const lastSeg = project.transcript[project.transcript.length - 1];
-    const newStart = lastSeg ? lastSeg.end : 0;
-    const newEnd = newStart + 4.0;
-    const newSeg: TranscriptSegment = {
-      id: `seg-new-${Date.now()}`,
-      start: newStart,
-      end: newEnd,
-      text: 'Type new original speech here...',
-      translatedText: 'Escribe la traducción aquí...',
-      speaker: 'New Speaker'
-    };
-    onUpdateTranscript([...project.transcript, newSeg]);
-    startEditing(newSeg);
+  const handleRevertSegment = (id: string) => {
+    setDraft((prev) =>
+      prev.map((seg) => {
+        if (seg.id !== id) return seg;
+        const baseline = seg.baselineTranslatedText ?? seg.translatedText;
+        return {
+          ...seg,
+          translatedText: baseline,
+          isEdited: false,
+        };
+      })
+    );
+  };
+
+  const handleRegenerateSegment = (id: string) => {
+    if (onRegenerateSegment) {
+      onRegenerateSegment(id);
+      return;
+    }
+    setRegenNotice('Segment regeneration will connect to the backend in a later sprint.');
+    window.setTimeout(() => setRegenNotice(null), 3500);
   };
 
   return (
-    <div 
-      className="bg-white dark:bg-zinc-900/60 backdrop-blur-md border border-zinc-200 dark:border-zinc-800/80 rounded-2xl p-6 space-y-4 transition-all shadow-sm dark:shadow-none" 
-      id={`transcript-editor-${project.id}`}
+    <div
+      className="bg-white dark:bg-zinc-900/30 border border-zinc-200/50 dark:border-zinc-900 rounded-2xl p-5 space-y-4 text-left"
+      id={`timeline-transcript-editor-${project.id}`}
     >
-      {/* Header and Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-100 dark:border-zinc-800/80 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-100 dark:border-zinc-800 pb-3">
         <div>
-          <h3 className="text-sm font-bold text-zinc-900 dark:text-white tracking-tight flex items-center gap-2">
-            <span>Dual Transcript Editor (Whisper v3 ⇄ Meta NLLB)</span>
-          </h3>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Modify text segments, timeline offsets, or add speakers below. Edits synchronize automatically.
+          <h4 className="text-xs font-mono font-bold text-zinc-900 dark:text-white uppercase tracking-widest flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-emerald-500" />
+            Timeline Transcript Editor
+          </h4>
+          <p className="text-[10px] text-zinc-400 mt-1">
+            Timestamps are read-only. Edit translated text inline, then Save. Full video is not regenerated.
           </p>
         </div>
-        <div className="flex gap-2 flex-shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={addSegment}
-            className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-100 rounded-lg text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer border border-zinc-200 dark:border-zinc-700"
-            title="Insert new segment"
+            type="button"
+            onClick={handleRevert}
+            disabled={draft.length === 0}
+            className="px-3 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wide bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 hover:border-zinc-400 disabled:opacity-40 cursor-pointer flex items-center gap-1.5"
           >
-            <Plus className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Add Segment</span>
+            <RotateCcw className="w-3.5 h-3.5" />
+            Revert
           </button>
           <button
-            onClick={onRegenerateVoice}
-            disabled={isRegenerating || project.transcript.length === 0}
-            className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-lg text-xs font-mono transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50 disabled:hover:bg-emerald-500 cursor-pointer"
-            title="Trigger CosyVoice/XTTS Dub track compilation"
+            type="button"
+            onClick={handleSave}
+            disabled={!hasUnsavedChanges}
+            className="px-3 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wide bg-emerald-500 hover:bg-emerald-400 text-zinc-950 disabled:opacity-40 cursor-pointer flex items-center gap-1.5"
           >
-            {isRegenerating ? (
-              <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Re-Synthesizing...</span>
-              </>
-            ) : (
-              <>
-                <Volume2 className="w-3.5 h-3.5" />
-                <span>Regenerate Voice</span>
-              </>
-            )}
+            <Save className="w-3.5 h-3.5" />
+            Save{unsavedCount > 0 ? ` (${unsavedCount})` : ''}
           </button>
         </div>
       </div>
 
-      {/* Editor Grid Row headers */}
-      <div className="hidden lg:grid grid-cols-12 gap-4 text-[10px] font-mono text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider px-2">
-        <div className="col-span-2">Speaker & Timeline</div>
-        <div className="col-span-5">Original Speech (Faster Whisper)</div>
-        <div className="col-span-5">Translated Speech (NLLB-200)</div>
-      </div>
+      {(saveNotice || regenNotice) && (
+        <div className="text-[10px] font-mono px-3 py-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400">
+          {saveNotice || regenNotice}
+        </div>
+      )}
 
-      {/* Segments Stack */}
-      <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1" id="transcript-segments-stack">
-        {project.transcript.length === 0 ? (
-          <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-950/20 border border-zinc-200 dark:border-zinc-800/45 rounded-xl">
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">No dialogue segments available. Click "Add Segment" above.</p>
+      <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+        {draft.length === 0 ? (
+          <div className="text-center py-8 text-xs text-zinc-500 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl">
+            No transcript segments available for this project.
           </div>
         ) : (
-          project.transcript.map((seg) => {
-            const isEditing = editingSegmentId === seg.id;
+          draft.map((seg, index) => {
+            const isEditing = editingId === seg.id;
+            const baseline = seg.baselineTranslatedText ?? seg.translatedText;
+            const edited = seg.translatedText !== baseline || Boolean(seg.isEdited);
 
             return (
-              <div 
-                key={seg.id} 
-                className={`p-4 rounded-xl border transition-all ${
-                  isEditing 
-                    ? 'bg-zinc-50 dark:bg-zinc-950 border-emerald-500/50 dark:border-emerald-500/50 shadow-[0_0_15px_-3px_rgba(16,185,129,0.12)]' 
-                    : 'bg-zinc-50/50 dark:bg-zinc-950/40 border-zinc-200 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700'
+              <div
+                key={seg.id}
+                className={`rounded-xl border p-3.5 space-y-3 ${
+                  edited
+                    ? 'border-amber-500/35 bg-amber-500/[0.03]'
+                    : 'border-zinc-200/60 dark:border-zinc-800 bg-zinc-50/40 dark:bg-zinc-950/30'
                 }`}
               >
-                {isEditing ? (
-                  /* EDITING MODE FORM UI */
-                  <div className="space-y-3" id={`editing-segment-${seg.id}`}>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 block mb-1 font-bold">SPEAKER TAG</label>
-                        <div className="flex items-center bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1">
-                          <User2 className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 mr-1.5" />
-                          <input
-                            type="text"
-                            value={editSpeaker}
-                            onChange={(e) => setEditSpeaker(e.target.value)}
-                            className="bg-transparent text-xs text-zinc-800 dark:text-white w-full focus:outline-none font-sans"
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 block mb-1 font-bold">START TIME (SEC)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={editStart}
-                          onChange={(e) => setEditStart(parseFloat(e.target.value) || 0)}
-                          className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-800 dark:text-white font-mono focus:outline-none focus:border-zinc-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 block mb-1 font-bold">END TIME (SEC)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={editEnd}
-                          onChange={(e) => setEditEnd(parseFloat(e.target.value) || 0)}
-                          className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-800 dark:text-white font-mono focus:outline-none focus:border-zinc-400"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 block mb-1 font-bold">ORIGINAL TRANSCRIPT TEXT</label>
-                        <textarea
-                          rows={2}
-                          value={editOriginalText}
-                          onChange={(e) => setEditOriginalText(e.target.value)}
-                          className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg p-2.5 text-xs text-zinc-800 dark:text-white focus:outline-none focus:border-zinc-400 font-sans"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-mono text-emerald-600 dark:text-emerald-500 block mb-1 font-bold">TRANSLATED DUB TEXT</label>
-                        <textarea
-                          rows={2}
-                          value={editTranslatedText}
-                          onChange={(e) => setEditTranslatedText(e.target.value)}
-                          className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg p-2.5 text-xs text-zinc-800 dark:text-white focus:outline-none focus:border-zinc-400 font-sans"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center pt-2 border-t border-zinc-200 dark:border-zinc-800">
-                      <button
-                        onClick={() => deleteSegment(seg.id)}
-                        className="text-rose-500 hover:text-rose-600 text-xs flex items-center gap-1 font-mono transition-colors cursor-pointer"
-                        title="Delete dialogue chunk"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete Segment</span>
-                      </button>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setEditingSegmentId(null)}
-                          className="px-3 py-1.5 bg-white dark:bg-zinc-900 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-mono transition-all cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={() => saveEditing(seg.id)}
-                          className="px-3.5 py-1.5 bg-emerald-500 text-zinc-950 rounded-lg text-xs font-bold font-mono transition-all hover:bg-emerald-400 flex items-center gap-1 shadow-sm cursor-pointer"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          <span>Save Changes</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* DISPLAY READ-ONLY MODE WITH SIDE-BY-SIDE PANELS */
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start relative group/item">
-                    {/* Column 1: Metadata */}
-                    <div className="lg:col-span-2 flex lg:flex-col justify-between lg:justify-start gap-1 text-xs">
-                      <div className="flex items-center gap-1.5 font-bold text-zinc-700 dark:text-zinc-300">
-                        <User2 className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500" />
-                        <span>{seg.speaker || 'Voice A'}</span>
-                      </div>
-                      <span className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500">
-                        {seg.start.toFixed(1)}s - {seg.end.toFixed(1)}s
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-[10px] font-mono text-zinc-500">
+                    <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
+                      #{index + 1}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
+                      {seg.start.toFixed(2)}s → {seg.end.toFixed(2)}s
+                    </span>
+                    {edited && (
+                      <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25 font-bold uppercase tracking-wider">
+                        Edited
                       </span>
-                    </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(isEditing ? null : seg.id)}
+                      className="px-2 py-1 rounded-lg text-[9px] font-mono font-bold uppercase bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 cursor-pointer flex items-center gap-1"
+                    >
+                      <Pencil className="w-3 h-3 text-emerald-500" />
+                      {isEditing ? 'Done' : 'Edit'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRevertSegment(seg.id)}
+                      disabled={!edited}
+                      className="px-2 py-1 rounded-lg text-[9px] font-mono font-bold uppercase bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 disabled:opacity-35 cursor-pointer flex items-center gap-1"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      Revert
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerateSegment(seg.id)}
+                      className="px-2 py-1 rounded-lg text-[9px] font-mono font-bold uppercase bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 cursor-pointer flex items-center gap-1"
+                      title="Backend regeneration comes later"
+                    >
+                      <RefreshCw className="w-3 h-3 text-sky-500" />
+                      Regenerate
+                    </button>
+                  </div>
+                </div>
 
-                    {/* Column 2: Original Text */}
-                    <div className="lg:col-span-5 text-xs text-zinc-600 dark:text-zinc-300 bg-white dark:bg-zinc-900/40 p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800/40 leading-relaxed">
-                      <p>{seg.text}</p>
-                    </div>
-
-                    {/* Column 3: Translated Text */}
-                    <div className="lg:col-span-5 text-xs text-zinc-800 dark:text-zinc-100 bg-emerald-500/[0.01] p-2.5 rounded-lg border border-emerald-500/10 dark:border-emerald-500/10 leading-relaxed font-medium">
-                      <p>{seg.translatedText}</p>
-                    </div>
-
-                    {/* Hover edit trigger button */}
-                    <div className="absolute top-2 right-2 flex gap-1 lg:opacity-0 group-hover/item:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => startEditing(seg)}
-                        className="p-1.5 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 rounded-md border border-zinc-200 dark:border-zinc-700 transition-all text-xs cursor-pointer shadow-sm"
-                        title="Edit segment"
-                      >
-                        <Edit2 className="w-3.5 h-3.5 text-emerald-500" />
-                      </button>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-mono uppercase tracking-wider text-zinc-400 font-bold">
+                      Original
+                    </p>
+                    <div className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300 bg-white dark:bg-zinc-950/50 border border-zinc-200/70 dark:border-zinc-800 rounded-lg p-2.5 min-h-[56px]">
+                      {seg.text || '—'}
                     </div>
                   </div>
-                )}
+
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-mono uppercase tracking-wider text-emerald-600 dark:text-emerald-500 font-bold flex items-center gap-1">
+                      Translated
+                      {isEditing && <Sparkles className="w-3 h-3" />}
+                    </p>
+                    {isEditing ? (
+                      <textarea
+                        rows={3}
+                        value={seg.translatedText}
+                        onChange={(e) => updateTranslated(seg.id, e.target.value)}
+                        className="w-full text-[11px] leading-relaxed text-zinc-800 dark:text-zinc-100 bg-white dark:bg-zinc-950 border border-emerald-500/40 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-sans resize-y min-h-[56px]"
+                      />
+                    ) : (
+                      <div className="text-[11px] leading-relaxed text-zinc-800 dark:text-zinc-100 bg-emerald-500/[0.03] border border-emerald-500/15 rounded-lg p-2.5 min-h-[56px]">
+                        {seg.translatedText || '—'}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             );
           })

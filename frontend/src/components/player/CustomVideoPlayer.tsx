@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Play, Pause, Volume2, VolumeX, Maximize2, Download, Subtitles, Volume1, Languages, Sparkles } from 'lucide-react';
 import { Project, TranscriptSegment } from '../../types';
+import { getAuthenticatedProjectVideoUrl, getAuthenticatedProjectDownloadUrl } from '../../services/api';
 
 interface CustomVideoPlayerProps {
   project: Project | null;
@@ -17,6 +18,35 @@ export default function CustomVideoPlayer({ project, onEditSegment }: CustomVide
   const [showSubtitles, setShowSubtitles] = useState(true);
   const [audioTrack, setAudioTrack] = useState<'original' | 'dubbed'>('dubbed');
   const [activeSubtitle, setActiveSubtitle] = useState<string>('');
+  const [mediaSrc, setMediaSrc] = useState('');
+  const [downloadHref, setDownloadHref] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!project?.id || project.status !== 'Completed') {
+        setMediaSrc('');
+        setDownloadHref('');
+        return;
+      }
+      try {
+        const [v, d] = await Promise.all([
+          getAuthenticatedProjectVideoUrl(project.id, true),
+          getAuthenticatedProjectDownloadUrl(project.id, true),
+        ]);
+        if (!cancelled) {
+          setMediaSrc(v);
+          setDownloadHref(d);
+        }
+      } catch (e) {
+        console.warn('Failed to auth media URLs', e);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, project?.status]);
 
   // Reset player when project changes
   useEffect(() => {
@@ -126,7 +156,7 @@ export default function CustomVideoPlayer({ project, onEditSegment }: CustomVide
         <video
           id="video-screen"
           ref={videoRef}
-          src={project.videoUrl}
+          src={mediaSrc}
           className="w-full h-full object-contain"
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
@@ -268,7 +298,7 @@ export default function CustomVideoPlayer({ project, onEditSegment }: CustomVide
               <Maximize2 className="w-4 h-4" />
             </button>
             <a
-              href={project.videoUrl}
+              href={downloadHref}
               download={`${project.title.toLowerCase().replace(/\s+/g, '_')}_dubbed.mp4`}
               className="p-2 bg-zinc-900 dark:bg-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-100 rounded-lg transition-all flex items-center gap-1.5 text-xs cursor-pointer border border-transparent dark:border-zinc-700"
               title="Download Finished Dubbed Video"
