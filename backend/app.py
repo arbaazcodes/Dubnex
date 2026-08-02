@@ -1,9 +1,10 @@
 from services.tts_service import generate_speech
 from services.pipeline_service import process_video
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Body
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Body, BackgroundTasks
 import tempfile
 import shutil
 import os
+import asyncio
 from services.translator_service import translate_text
 from services.video_renderer_service import replace_audio
 from services.whisper_service import detect_language, transcribe_audio
@@ -198,6 +199,7 @@ async def analyze_video_api(payload: dict = Body(...)):
 
 @app.post("/process-video")
 async def process_video_api(
+    background_tasks: BackgroundTasks,
     target_lang: str = "en",
     voice: str = "george",
     file: UploadFile = File(...)
@@ -206,26 +208,101 @@ async def process_video_api(
         shutil.copyfileobj(file.file, temp)
         video_path = temp.name
 
-    try:
-        result = await process_video(
-    video_path=video_path,
-    target_language=target_lang,
-    voice=voice,
-)
+    job_id = create_job(
+        title=file.filename or "Uploaded Video",
+        target_language=target_lang,
+        metadata={
+            "fileName": file.filename or "upload.mp4",
+            "fileSize": str(getattr(file, "size", "") or "N/A"),
+        },
+    )
+    update_job(
+        job_id,
+        stage="Upload",
+        progress=10,
+        message="Upload complete. Queued for processing.",
+    )
 
-        return JSONResponse(
-    {
-        "success": True,
-        "output_video": result["output_video"],
-        "language": result["language"],
-        "original_text": result["original_text"],
-        "translated_text": result["translated_text"],
-    }
-)
+    def run_job():
+        """Runs in a worker thread after the HTTP response is sent."""
+        try:
+            def on_progress(stage, message=""):
+                update_job(job_id, stage=stage, message=message)
 
-    finally:
-        if os.path.exists(video_path):
-            os.remove(video_path)
+            result = asyncio.run(
+                process_video(
+                    video_path=video_path,
+                    target_language=target_lang,
+                    voice=voice,
+                    on_progress=on_progress,
+                )
+            )
+            finish_job(job_id, result)
+        except Exception as exc:
+            fail_job(job_id, exc)
+        finally:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+
+    background_tasks.add_task(run_job)
+
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Processing started in background",
+        }
+    )
+
+
+@app.get("/events/{job_id}")
+async def job_events(job_id: str):
+    async def event_stream():
+        sent_history = 0
+        while True:
+            job = get_job(job_id)
+            if not job:
+                yield f"data: {json.dumps({'id': job_id, 'status': 'Failed', 'message': 'Job not found', 'progress': 0})}\n\n"
+                break
+
+            history = job.get("stage_history") or [job.get("stage") or job.get("status")]
+            from services.job_service import STAGE_PROGRESS
+
+            # Emit one SSE event per newly recorded stage so fast steps are not skipped
+            while sent_history < len(history):
+                stage = history[sent_history]
+                snapshot = dict(job)
+                snapshot["stage"] = stage
+                if job.get("status") not in ("Completed", "Failed"):
+                    snapshot["status"] = stage
+                    snapshot["progress"] = STAGE_PROGRESS.get(stage, job.get("progress", 0))
+                    snapshot["message"] = stage
+                elif stage != "Completed" and stage != "Failed":
+                    snapshot["status"] = stage
+                    snapshot["progress"] = STAGE_PROGRESS.get(stage, job.get("progress", 0))
+                    snapshot["message"] = stage
+                else:
+                    snapshot["status"] = job.get("status")
+                    snapshot["progress"] = job.get("progress", 100)
+                    snapshot["message"] = job.get("message", stage)
+
+                yield f"data: {json.dumps(snapshot)}\n\n"
+                sent_history += 1
+
+            if job.get("status") in ("Completed", "Failed") and sent_history >= len(history):
+                break
+
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/voices")

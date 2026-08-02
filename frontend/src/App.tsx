@@ -36,7 +36,7 @@ import {
 import { Project, VoiceSettings, TTSVoiceEngine } from './types';
 import { targetLanguages, voicePresets } from './constants/data';
 import { saveUserProject, loadUserProjects, loginWithGoogleMock, AuthUser, isRealFirebase } from './lib/firebase';
-import { translateVideo } from './services/api';
+import { translateVideo, getJobEventsUrl } from './services/api';
 
 export default function App() {
   // Navigation & Core States
@@ -412,41 +412,35 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // SSE job link
   const startSSEListener = (jobId: string) => {
-    const eventSource = new EventSource(`http://127.0.0.1:8000/api/pipeline-sse?jobId=${jobId}`);
+    const eventSource = new EventSource(getJobEventsUrl(jobId));
     
     eventSource.onmessage = (event) => {
       try {
         const jobData = JSON.parse(event.data);
         const updatedJob: Project = {
-          id: jobData.id,
-          title: jobData.title,
-          originalLanguage: jobData.sourceLanguage,
-          targetLanguage: jobData.targetLanguage,
-          status: jobData.status,
-          progress: jobData.progress,
-          size: jobData.metadata?.fileSize || 'N/A',
-          duration: jobData.metadata?.duration || '00:00',
-          createdAt: new Date().toISOString(),
-          videoUrl: jobData.videoUrl,
+          id: jobData.id || jobId,
+          title: jobData.title || videoMetadata?.name || 'Translated Video',
+          originalLanguage: jobData.sourceLanguage || detectedLanguage || 'unknown',
+          targetLanguage: jobData.targetLanguage || targetLanguageInput,
+          status: jobData.status || jobData.stage || 'processing',
+          progress: typeof jobData.progress === 'number' ? jobData.progress : 0,
+          size: jobData.metadata?.fileSize || videoMetadata?.size || 'N/A',
+          duration: jobData.metadata?.duration || videoMetadata?.duration || '00:00',
+          createdAt: jobData.created_at || new Date().toISOString(),
+          videoUrl: jobData.videoUrl || '',
+          dubbedUrl: jobData.videoUrl || '',
           steps: jobData.steps || [],
-          voiceSettings: {
-            gender: 'Male',
-            speed: 1.0,
-            pitch: 1.0,
-            emotion: 'Professional',
-            energy: 1.0,
-            pauseControl: 0.25,
-            voiceName: 'Default'
-          },
+          voiceSettings: { ...voiceSettings },
           transcript: jobData.transcript || [],
-          logs: jobData.logs || []
+          logs: jobData.logs || [],
+          failureReason: jobData.status === 'Failed' ? (jobData.message || 'Pipeline failed') : undefined,
         };
 
         setProjects(prev => {
-          const index = prev.findIndex(p => p.id === jobData.id);
+          const index = prev.findIndex(p => p.id === updatedJob.id);
           let nextList = [...prev];
           if (index >= 0) {
-            nextList[index] = updatedJob;
+            nextList[index] = { ...nextList[index], ...updatedJob };
           } else {
             nextList = [updatedJob, ...prev];
           }
@@ -460,8 +454,16 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
           return nextList;
         });
 
+        setSelectedProjectId(updatedJob.id);
+        setUploadProgress(updatedJob.progress);
+        setUploadingState(updatedJob.status);
+
         if (jobData.status === 'Completed' || jobData.status === 'Failed') {
           eventSource.close();
+          if (jobData.status === 'Failed') {
+            setUploadError(jobData.message || 'Translation failed');
+            setAppState('upload');
+          }
         }
       } catch (e) {
         console.error('SSE parser exception:', e);
@@ -469,7 +471,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     };
 
     eventSource.onerror = () => {
-      eventSource.close();
+      // Let the browser retry while the job is running; onmessage closes on terminal states.
     };
   };
 
@@ -486,15 +488,63 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
     return;
   }
 
-  console.log("📤 About to call translateVideo()");
+  setUploadError(null);
+  setAppState('processing');
+  setUploadProgress(10);
+  setUploadingState('Upload');
 
-const result = await translateVideo(
-    selectedFile,
-    targetLanguageInput,
-    "george"
-);
+  try {
+    console.log("📤 About to call translateVideo()");
 
-console.log("📥 translateVideo finished", result);
+    const startResult = await translateVideo(
+      selectedFile,
+      targetLanguageInput,
+      "george"
+    );
+
+    console.log("📥 translateVideo queued", startResult);
+
+    const jobId = startResult?.job_id;
+    if (!jobId) {
+      throw new Error('Backend did not return a job_id.');
+    }
+
+    const pendingProject: Project = {
+      id: jobId,
+      title: videoMetadata.name || 'Translated Video',
+      originalLanguage: detectedLanguage || 'unknown',
+      targetLanguage: targetLanguageInput,
+      status: 'Upload',
+      progress: 10,
+      size: videoMetadata.size,
+      duration: videoMetadata.duration,
+      createdAt: new Date().toISOString(),
+      videoUrl: '',
+      voiceSettings: { ...voiceSettings },
+      transcript: [],
+      logs: [{
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        message: 'Upload complete. Waiting for pipeline events...',
+        step: 'Upload'
+      }]
+    };
+
+    setProjects(prev => {
+      const nextList = [pendingProject, ...prev.filter(p => p.id !== jobId)];
+      localStorage.setItem('ai_video_translator_projects', JSON.stringify(nextList));
+      return nextList;
+    });
+    setSelectedProjectId(jobId);
+    startSSEListener(jobId);
+  } catch (err: any) {
+    console.error('Translation workflow failed:', err);
+    setUploadError(err?.message || 'Translation failed');
+    setUploadProgress(null);
+    setUploadingState('');
+    setAppState('upload');
+  }
 };
   // Reset core workflow
   const handleResetWorkflow = () => {
@@ -1196,6 +1246,26 @@ console.log("📥 translateVideo finished", result);
                     download={`${activeProject?.title || 'dubbed_video'}.mp4`}
                     target="_blank"
                     rel="noreferrer"
+                    onClick={async (e) => {
+                      if (!activeProject?.videoUrl) return;
+                      e.preventDefault();
+                      try {
+                        const res = await fetch(activeProject.videoUrl);
+                        if (!res.ok) throw new Error('Download failed');
+                        const blob = await res.blob();
+                        const objectUrl = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = objectUrl;
+                        link.download = `${activeProject.title || 'dubbed_video'}.mp4`;
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        URL.revokeObjectURL(objectUrl);
+                      } catch (err) {
+                        console.error('Download failed:', err);
+                        window.open(activeProject.videoUrl, '_blank', 'noopener,noreferrer');
+                      }
+                    }}
                     className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-extrabold text-xs font-sans rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Download className="w-4.5 h-4.5" />

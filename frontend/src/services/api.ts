@@ -46,5 +46,13 @@ export async function translateVideo(
     throw new Error(errorText || "Translation failed");
   }
 
-  return response.json();
+  return response.json() as Promise<{
+    job_id: string;
+    status: string;
+    message?: string;
+  }>;
+}
+
+export function getJobEventsUrl(jobId: string) {
+  return `${API_BASE}/events/${encodeURIComponent(jobId)}`;
 }
