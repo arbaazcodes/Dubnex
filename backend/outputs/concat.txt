@@ -1,3 +1,1 @@
 file 'C:\Users\arbaa\OneDrive\Documents\SCREEN.AI\backend\outputs\segment_000.mp3'
-file 'C:\Users\arbaa\OneDrive\Documents\SCREEN.AI\backend\outputs\segment_001.mp3'
-file 'C:\Users\arbaa\OneDrive\Documents\SCREEN.AI\backend\outputs\segment_002.mp3'
