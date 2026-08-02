@@ -91,11 +91,6 @@ def translate_text(text: str, source_language: str, target_language: str):
         skip_special_tokens=True,
     )[0]
 
-    print("=" * 50)
-    print("Input :", text)
-    print("Output:", translated)
-    print("=" * 50)
-
     return translated
 
 def translate_segments(

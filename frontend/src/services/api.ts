@@ -32,13 +32,14 @@ export async function translateVideo(
   const form = new FormData();
 
   form.append("file", file);
-  form.append("target_language", language);
-  form.append("voice", voice);
 
-  const response = await fetch(`${API_BASE}/process-video`, {
-    method: "POST",
-    body: form,
-  });
+  const response = await fetch(
+    `${API_BASE}/process-video?target_lang=${encodeURIComponent(language)}&voice=${encodeURIComponent(voice)}`,
+    {
+      method: "POST",
+      body: form,
+    }
+  );
 
   if (!response.ok) {
     const errorText = await response.text();
