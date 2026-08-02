@@ -1,0 +1,10 @@
+{
+  "name": "screen-ai",
+  "private": true,
+  "description": "Monorepo root — use for Cloudflare Pages when Root Directory is the repo root",
+  "scripts": {
+    "dev": "npm run dev --prefix frontend",
+    "build": "npm ci --prefix frontend && npm run build --prefix frontend",
+    "preview": "npm run start --prefix frontend"
+  }
+}

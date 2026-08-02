@@ -1,0 +1,9 @@
+/assets/*.js
+  Content-Type: application/javascript
+  X-Content-Type-Options: nosniff
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/*.css
+  Content-Type: text/css
+  X-Content-Type-Options: nosniff
+  Cache-Control: public, max-age=31536000, immutable

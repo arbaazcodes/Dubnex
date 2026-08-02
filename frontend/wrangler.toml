@@ -1,0 +1,5 @@
+# Cloudflare Pages — build this directory as the project root, OR set
+# dashboard Root Directory to "frontend" and output directory to "dist".
+name = "screen-ai-frontend"
+compatibility_date = "2025-08-01"
+pages_build_output_dir = "dist"
