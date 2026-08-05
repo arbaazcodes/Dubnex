@@ -37,7 +37,7 @@ import {
 import { Project, VoiceSettings, TTSVoiceEngine, TranscriptSegment, LibraryVoice } from './types';
 import { targetLanguages, voicePresets } from './constants/data';
 import { voiceLibraryCatalog, VOICE_LIBRARY_STORAGE_KEY, resolveApiVoiceKey } from './constants/voices';
-import { saveUserProject, loadUserProjects, deleteUserProject, loginWithGoogle, logoutFirebase, subscribeToAuth, AuthUser, isRealFirebase } from './lib/firebase';
+import { saveUserProject, loadUserProjects, deleteUserProject, logoutFirebase, subscribeToAuth, AuthUser, isRealFirebase } from './lib/firebase';
 import {
   translateVideo,
   getJobEventsUrl,
@@ -55,6 +55,8 @@ import ProjectsDashboard from './components/dashboard/ProjectsDashboard';
 import ProjectDetails from './components/dashboard/ProjectDetails';
 import TranscriptEditor from './components/chat/TranscriptEditor';
 import VoiceLibrary, { libraryVoiceToSettings } from './components/voices/VoiceLibrary';
+import VoiceSelector from './components/voices/VoiceSelector';
+import AuthModal from './components/auth/AuthModal';
 
 export default function App() {
   // Navigation & Core States
@@ -67,7 +69,7 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [secureVideoSrc, setSecureVideoSrc] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   // Current translation job tracking
   const [projects, setProjects] = useState<Project[]>([]);
@@ -110,7 +112,6 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   });
   const [favoriteVoiceIds, setFavoriteVoiceIds] = useState<string[]>([]);
   const [defaultVoiceId, setDefaultVoiceId] = useState<string | null>('el-george');
-  const [geminiKey, setGeminiKey] = useState('••••••••••••••••••••••••••••');
   const [elevenLabsKey, setElevenLabsKey] = useState('••••••••••••••••••••••••••••');
 
   // AI STUDIO INTEGRATION SUITE STATES
@@ -511,21 +512,6 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
       window.clearInterval(timer);
     };
   }, [appState, activeProject?.id, activeProject?.status, user]);
-
-  // Handle Google Login
-  const handleGoogleLogin = async () => {
-    setAuthLoading(true);
-    setUploadError(null);
-    try {
-      await loginWithGoogle();
-      // user state updates via subscribeToAuth
-    } catch (e: any) {
-      console.error('Auth failed:', e);
-      setUploadError(e?.message || 'Google sign-in failed');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
 
   // Handle Logout
   const handleLogout = async () => {
@@ -931,7 +917,8 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
   }
 
   if (!user) {
-    setUploadError('Sign in with Google to start dubbing. Processing requires authentication.');
+    setUploadError('Sign in to start dubbing. Processing requires authentication.');
+    setShowAuthModal(true);
     return;
   }
 
@@ -1071,6 +1058,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
           message: userMsg,
           modelName: chatModel,
           systemInstruction: sysInstruction,
+          role: chatRole,
           useHighThinking: chatThinking
         })
       });
@@ -1364,9 +1352,11 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
           {user ? (
             <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/40 dark:border-zinc-800 rounded-full py-1.5 pl-2 pr-3 select-none">
               <img src={user.photoURL} alt={user.displayName} className="w-5.5 h-5.5 rounded-full ring-1 ring-emerald-500" />
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold leading-none">{user.displayName}</span>
-                <span className="text-[8px] text-zinc-400 font-mono leading-none mt-0.5">{user.email}</span>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] font-bold leading-none truncate max-w-[120px] sm:max-w-[160px]">{user.displayName}</span>
+                <span className="text-[8px] text-zinc-400 font-mono leading-none mt-0.5 truncate max-w-[120px] sm:max-w-[160px]">
+                  {user.email || user.phoneNumber || 'Signed in'}
+                </span>
               </div>
               <button 
                 onClick={handleLogout}
@@ -1378,12 +1368,14 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
             </div>
           ) : (
             <button
-              onClick={handleGoogleLogin}
-              disabled={authLoading}
+              onClick={() => {
+                setUploadError(null);
+                setShowAuthModal(true);
+              }}
               className="px-3.5 py-1.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-850 dark:text-zinc-100 rounded-xl text-[11px] font-bold font-mono transition-all border border-zinc-200 dark:border-zinc-850 flex items-center gap-1.5 cursor-pointer"
             >
               <User className="w-3.5 h-3.5 text-emerald-500" />
-              <span>{authLoading ? 'Signing in...' : 'Sign in with Google'}</span>
+              <span>Sign in</span>
             </button>
           )}
 
@@ -1661,25 +1653,21 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                         </div>
                       </div>
 
-                      {/* Default voice from Voice Library — passed to FastAPI / ElevenLabs */}
-                      <div className="bg-zinc-50/50 dark:bg-zinc-950/20 border border-zinc-200/40 dark:border-zinc-900 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <span className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block">
-                            Default Project Voice
-                          </span>
-                          <p className="text-xs font-bold text-zinc-900 dark:text-white truncate mt-0.5">
-                            {voiceSettings.voiceName}
-                            <span className="text-zinc-400 font-mono font-normal ml-1.5">
-                              · {resolveApiVoiceKey(defaultVoiceId)}
-                            </span>
-                          </p>
-                        </div>
+                      {/* Searchable voice selector — apiVoiceKey still via resolveApiVoiceKey(defaultVoiceId) */}
+                      <VoiceSelector
+                        voices={voiceLibraryCatalog}
+                        selectedId={defaultVoiceId}
+                        onSelect={handleSetDefaultVoice}
+                        label="Project Voice"
+                      />
+
+                      <div className="flex justify-end -mt-1">
                         <button
                           type="button"
                           onClick={() => setMainView('voices')}
-                          className="px-3 py-1.5 rounded-xl text-[10px] font-mono font-bold uppercase bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-emerald-500/40 cursor-pointer flex-shrink-0"
+                          className="px-2 py-1 text-[10px] font-mono font-bold uppercase text-zinc-500 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer"
                         >
-                          Voice Library
+                          Open full Voice Library
                         </button>
                       </div>
 
@@ -2246,6 +2234,15 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
       </main>
 
+      <AnimatePresence>
+        {showAuthModal && (
+          <AuthModal
+            open={showAuthModal}
+            onClose={() => setShowAuthModal(false)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* SETTINGS DRAWER */}
       <AnimatePresence>
         {showSettings && (
@@ -2372,7 +2369,7 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                     </div>
                     <div className="flex justify-between border-b border-zinc-100 dark:border-zinc-900/60 pb-1.5">
                       <span className="text-zinc-400 uppercase">Database & Storage</span>
-                      <strong className="text-zinc-800 dark:text-zinc-200 text-[11px]">{isRealFirebase ? "Firestore & Auth (Google)" : "Simulated Local Cache Storage"}</strong>
+                      <strong className="text-zinc-800 dark:text-zinc-200 text-[11px]">{isRealFirebase ? "Firestore & Auth (Google, Email, Phone)" : "Simulated Local Cache Storage"}</strong>
                     </div>
                   </div>
                 </div>
@@ -2393,14 +2390,10 @@ const [selectedFile, setSelectedFile] = useState<File | null>(null);
                       />
                     </div>
                     <div className="space-y-1">
-                      <span className="text-zinc-600 dark:text-zinc-455 font-medium">Gemini Pro API Key Override</span>
-                      <input
-                        type="password"
-                        value={geminiKey}
-                        onChange={(e) => setGeminiKey(e.target.value)}
-                        className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 rounded-lg p-2 text-zinc-800 dark:text-zinc-300 font-mono focus:outline-none"
-                        placeholder="Google AI Studio key"
-                      />
+                      <span className="text-zinc-600 dark:text-zinc-455 font-medium">Gemini API Key</span>
+                      <div className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 rounded-lg p-2 text-zinc-600 dark:text-zinc-400 text-[11px]">
+                        Backend-only via <code className="font-mono">GEMINI_API_KEY</code> in <code className="font-mono">backend/.env</code>. Never stored in the browser.
+                      </div>
                     </div>
                   </div>
                 </div>

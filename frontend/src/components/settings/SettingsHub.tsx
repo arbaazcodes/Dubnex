@@ -4,7 +4,6 @@ import { Sliders, Bell, Shield, Key, HardDrive, RefreshCw, Sparkles, AlertCircle
 export default function SettingsHub() {
   const [themeColor, setThemeColor] = useState<'slate' | 'indigo' | 'crimson'>('slate');
   const [elevenLabsKey, setElevenLabsKey] = useState('••••••••••••••••••••••••••••');
-  const [geminiKey, setGeminiKey] = useState('••••••••••••••••••••••••••••');
   const [emulatorMode, setEmulatorMode] = useState(false);
   const [slackWebhook, setSlackWebhook] = useState('https://hooks.slack.com/services/T00000000/B00000000/...');
   const [cacheTtl, setCacheTtl] = useState(24); // hours
@@ -49,20 +48,14 @@ export default function SettingsHub() {
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 block mb-1 uppercase tracking-wider font-bold">GEMINI SECRET KEY</label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    value={geminiKey}
-                    onChange={(e) => setGeminiKey(e.target.value)}
-                    className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-800 dark:text-zinc-300 focus:outline-none focus:border-zinc-400 font-mono"
-                    placeholder="Enter process.env.GEMINI_API_KEY override"
-                  />
-                  <div className="absolute top-1/2 right-2.5 -translate-y-1/2 text-[9px] font-mono text-emerald-700 bg-emerald-50 dark:text-emerald-400 dark:bg-emerald-500/10 px-1.5 py-px rounded border border-emerald-200 dark:border-emerald-500/10">
-                    Active server-side
-                  </div>
+                <label className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 block mb-1 uppercase tracking-wider font-bold">GEMINI API KEY</label>
+                <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2">
+                  <p className="text-[11px] text-zinc-700 dark:text-zinc-300 font-medium">Managed on the backend only</p>
+                  <p className="text-[9px] text-zinc-400 mt-1 leading-relaxed">
+                    Set <code className="font-mono">GEMINI_API_KEY</code> in <code className="font-mono">backend/.env</code>.
+                    The browser never receives or stores this key.
+                  </p>
                 </div>
-                <span className="text-[9px] text-zinc-400 dark:text-zinc-550 mt-1 block leading-relaxed">Always proxies securely via /api to hide tokens from client DOM.</span>
               </div>
 
               <div>

@@ -53,6 +53,30 @@ TRANSLATION_MODEL = os.getenv(
     "TRANSLATION_MODEL",
     "facebook/nllb-200-distilled-600M",
 )
+# Translation backend: auto (Gemini when GEMINI_API_KEY set, else NLLB) | gemini | nllb
+TRANSLATION_PROVIDER = (
+    os.getenv("TRANSLATION_PROVIDER", "auto").strip().lower() or "auto"
+)
+
+# Google Gemini (backend-only — never expose to frontend / VITE_*)
+GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
+GEMINI_MODEL = (
+    os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
+)
+GEMINI_CLEANUP_TRANSCRIPT = os.getenv(
+    "GEMINI_CLEANUP_TRANSCRIPT", "false"
+).strip().lower() in ("1", "true", "yes", "on")
+GEMINI_TIMEOUT_SECONDS = max(5.0, float(os.getenv("GEMINI_TIMEOUT_SECONDS", "60")))
+GEMINI_MAX_RETRIES = max(0, int(os.getenv("GEMINI_MAX_RETRIES", "3")))
+GEMINI_BACKOFF_BASE_SECONDS = max(0.0, float(os.getenv("GEMINI_BACKOFF_BASE_SECONDS", "1")))
+GEMINI_BACKOFF_MAX_SECONDS = max(
+    GEMINI_BACKOFF_BASE_SECONDS,
+    float(os.getenv("GEMINI_BACKOFF_MAX_SECONDS", "30")),
+)
+GEMINI_BACKOFF_JITTER_RATIO = max(
+    0.0,
+    min(1.0, float(os.getenv("GEMINI_BACKOFF_JITTER_RATIO", "0.25"))),
+)
 
 # ElevenLabs
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -109,7 +133,30 @@ QUEUE_NAME = os.getenv("QUEUE_NAME", "screen_ai:jobs").strip() or "screen_ai:job
 QUEUE_BRPOP_TIMEOUT = int(os.getenv("QUEUE_BRPOP_TIMEOUT", "5"))
 
 # Performance tuning (does not change pipeline stage order / outputs schema)
-TTS_CONCURRENCY = max(1, int(os.getenv("TTS_CONCURRENCY", "3")))
+# Default 1 avoids ElevenLabs concurrent_limit_exceeded on low-concurrency plans.
+# Raise via env when the account allows more parallel TTS requests.
+TTS_CONCURRENCY = max(1, int(os.getenv("TTS_CONCURRENCY", "1")))
+# Adaptive TTS limiter (Phase 1): ceiling is TTS_CONCURRENCY; floor is TTS_CONCURRENCY_MIN.
+TTS_CONCURRENCY_MIN = max(1, min(TTS_CONCURRENCY, int(os.getenv("TTS_CONCURRENCY_MIN", "1"))))
+TTS_429_MAX_RETRIES = max(0, int(os.getenv("TTS_429_MAX_RETRIES", "5")))
+TTS_BACKOFF_BASE_SECONDS = max(0.0, float(os.getenv("TTS_BACKOFF_BASE_SECONDS", "1")))
+TTS_BACKOFF_MAX_SECONDS = max(
+    TTS_BACKOFF_BASE_SECONDS,
+    float(os.getenv("TTS_BACKOFF_MAX_SECONDS", "60")),
+)
+TTS_BACKOFF_JITTER_RATIO = max(
+    0.0,
+    min(1.0, float(os.getenv("TTS_BACKOFF_JITTER_RATIO", "0.25"))),
+)
+TTS_REQUEST_TIMEOUT_SECONDS = max(1.0, float(os.getenv("TTS_REQUEST_TIMEOUT_SECONDS", "120")))
+TTS_ADAPTIVE_ENABLED = os.getenv("TTS_ADAPTIVE_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+TTS_DOWNGRADE_THRESHOLD = max(1, int(os.getenv("TTS_DOWNGRADE_THRESHOLD", "2")))
+TTS_RECOVERY_SUCCESS_STREAK = max(1, int(os.getenv("TTS_RECOVERY_SUCCESS_STREAK", "5")))
 TRANSLATION_BATCH_SIZE = max(1, int(os.getenv("TRANSLATION_BATCH_SIZE", "8")))
 WHISPER_WARMUP = os.getenv("WHISPER_WARMUP", "true").strip().lower() in (
     "1",

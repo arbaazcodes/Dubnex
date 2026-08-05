@@ -1,9 +1,9 @@
 import { LibraryVoice } from '../types';
 
 /**
- * Static Voice Library catalog for SCREEN.AI.
+ * Static Voice Library catalog for SCREEN.AI / Dubnex.
  * apiVoiceKey is sent to FastAPI /process-video and resolved via VOICE_MAP for ElevenLabs.
- * Preview URLs are null until a preview endpoint exists (UI-only preview).
+ * previewUrl null => Preview control disabled ("Preview unavailable").
  */
 export const voiceLibraryCatalog: LibraryVoice[] = [
   {
@@ -12,6 +12,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Male',
     accent: 'British',
+    language: 'en',
+    category: 'Narration',
     supportedLanguages: ['en', 'es', 'fr', 'de', 'hi', 'pt', 'it', 'ja'],
     tags: ['narrative', 'warm', 'documentary', 'default'],
     previewUrl: null,
@@ -25,6 +27,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Female',
     accent: 'American',
+    language: 'en',
+    category: 'Corporate',
     supportedLanguages: ['en', 'es', 'fr', 'de', 'pt', 'it', 'nl'],
     tags: ['clear', 'professional', 'corporate', 'bright'],
     previewUrl: null,
@@ -38,6 +42,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Male',
     accent: 'Indian English',
+    language: 'en',
+    category: 'Conversational',
     supportedLanguages: ['en', 'hi', 'ur', 'ta', 'te', 'gu', 'pa'],
     tags: ['conversational', 'south-asian', 'friendly'],
     previewUrl: null,
@@ -51,6 +57,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Female',
     accent: 'American',
+    language: 'en',
+    category: 'Cinematic',
     supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'pl'],
     tags: ['expressive', 'cinematic', 'emotional'],
     previewUrl: null,
@@ -64,6 +72,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Male',
     accent: 'American',
+    language: 'en',
+    category: 'Broadcast',
     supportedLanguages: ['en', 'es', 'fr', 'de', 'ja', 'ko', 'zh'],
     tags: ['deep', 'authoritative', 'news'],
     previewUrl: null,
@@ -77,6 +87,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Female',
     accent: 'American',
+    language: 'en',
+    category: 'Narration',
     supportedLanguages: ['en', 'es', 'fr', 'de', 'pt', 'ar'],
     tags: ['soft', 'storytelling', 'calm'],
     previewUrl: null,
@@ -90,6 +102,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Female',
     accent: 'British',
+    language: 'en',
+    category: 'Broadcast',
     supportedLanguages: ['en', 'fr', 'de', 'it', 'es'],
     tags: ['crisp', 'premium', 'broadcast'],
     previewUrl: null,
@@ -103,6 +117,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Neutral',
     accent: 'Neutral',
+    language: 'en',
+    category: 'Multilingual',
     supportedLanguages: ['en', 'es', 'fr', 'de', 'hi', 'ja', 'zh', 'ko'],
     tags: ['neutral', 'fast', 'multilingual'],
     previewUrl: null,
@@ -116,6 +132,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Female',
     accent: 'Australian',
+    language: 'en',
+    category: 'Social',
     supportedLanguages: ['en', 'es', 'fr', 'pt'],
     tags: ['youthful', 'energetic', 'social'],
     previewUrl: null,
@@ -129,6 +147,8 @@ export const voiceLibraryCatalog: LibraryVoice[] = [
     provider: 'ElevenLabs',
     gender: 'Male',
     accent: 'British',
+    language: 'en',
+    category: 'Audiobook',
     supportedLanguages: ['en', 'fr', 'de', 'es', 'it'],
     tags: ['formal', 'audiobook', 'steady'],
     previewUrl: null,
@@ -146,4 +166,28 @@ export function resolveApiVoiceKey(defaultVoiceId: string | null | undefined): s
   if (voice?.apiVoiceKey) return voice.apiVoiceKey;
   if (voice?.name) return voice.name.toLowerCase();
   return 'george';
+}
+
+export function languageDisplayName(code: string): string {
+  const map: Record<string, string> = {
+    en: 'English',
+    es: 'Spanish',
+    fr: 'French',
+    de: 'German',
+    hi: 'Hindi',
+    pt: 'Portuguese',
+    it: 'Italian',
+    ja: 'Japanese',
+    ko: 'Korean',
+    zh: 'Chinese',
+    ar: 'Arabic',
+    nl: 'Dutch',
+    pl: 'Polish',
+    ur: 'Urdu',
+    ta: 'Tamil',
+    te: 'Telugu',
+    gu: 'Gujarati',
+    pa: 'Punjabi',
+  };
+  return map[code] || code.toUpperCase();
 }

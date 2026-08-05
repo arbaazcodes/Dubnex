@@ -9,6 +9,8 @@ import pytest
 def translator(monkeypatch):
     import services.translator_service as ts
 
+    monkeypatch.setattr(ts, "TRANSLATION_PROVIDER", "nllb")
+    monkeypatch.setattr(ts, "GEMINI_API_KEY", "")
     # Avoid real GPU/CPU generate in unit tests
     monkeypatch.setattr(
         ts,
@@ -44,11 +46,16 @@ def test_unsupported_language(translator):
 def test_batch_empty_strings(monkeypatch):
     import services.translator_service as ts
 
-    mock_generate = MagicMock(return_value=MagicMock())
-    monkeypatch.setattr(ts.model, "generate", mock_generate)
-    monkeypatch.setattr(ts.tokenizer, "batch_decode", MagicMock(return_value=["ok"]))
-    monkeypatch.setattr(ts.tokenizer, "convert_tokens_to_ids", MagicMock(return_value=1))
+    monkeypatch.setattr(ts, "TRANSLATION_PROVIDER", "nllb")
+    monkeypatch.setattr(ts, "GEMINI_API_KEY", "")
+    mock_model = MagicMock()
+    mock_tokenizer = MagicMock()
+    mock_tokenizer.convert_tokens_to_ids = MagicMock(return_value=1)
+    mock_tokenizer.batch_decode = MagicMock(return_value=["ok"])
+    monkeypatch.setattr(ts, "_model", mock_model)
+    monkeypatch.setattr(ts, "_tokenizer", mock_tokenizer)
+    monkeypatch.setattr(ts, "_device", "cpu")
 
     out = ts._translate_batch(["", "  "], "en", "hi")
     assert out == ["", ""]
-    mock_generate.assert_not_called()
+    mock_model.generate.assert_not_called()

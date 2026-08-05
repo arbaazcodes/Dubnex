@@ -67,7 +67,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Observability outermost so all requests get IDs + metrics (CORS still applies inside)
+# Last add_middleware is outermost. CORS must be outermost so ACAO headers
+# are always applied (including on preflight / error responses).
+app.add_middleware(ObservabilityMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -76,7 +78,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Request-ID"],
 )
-app.add_middleware(ObservabilityMiddleware)
 
 # Public /outputs static mount removed — use /api/projects/{id}/video|download
 
@@ -253,7 +254,92 @@ async def chat_api(payload: dict = Body(...)):
     if not message:
         return JSONResponse(status_code=400, content={"error": "Message is required."})
 
-    return {"text": f"FastAPI mock response to: {message}"}
+    from services import gemini_service
+    from services.gemini_service import GeminiError
+
+    if not gemini_service.is_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Gemini is not configured. Set GEMINI_API_KEY on the backend.",
+            },
+        )
+
+    history = (payload or {}).get("history") or []
+    system_instruction = (payload or {}).get("systemInstruction")
+    model_name = (payload or {}).get("modelName")
+    role = (payload or {}).get("role")
+
+    try:
+        text = await asyncio.to_thread(
+            gemini_service.chat,
+            message,
+            history=history if isinstance(history, list) else [],
+            system_instruction=system_instruction,
+            role=role,
+            model_name=model_name,
+        )
+        return {"text": text, "provider": "gemini"}
+    except GeminiError as exc:
+        code = exc.status_code or 502
+        # Map to friendly HTTP without leaking secrets
+        if code in (401, 403):
+            status = 502
+        elif code == 429:
+            status = 429
+        elif code == 503:
+            status = 503
+        elif code == 504:
+            status = 504
+        else:
+            status = 502 if exc.retryable else 400
+        return JSONResponse(status_code=status, content={"error": str(exc)})
+    except Exception as exc:
+        get_logger("screen_ai.chat").error(
+            "chat failed",
+            extra={"event": "chat_error", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Chat failed unexpectedly."},
+        )
+
+
+@app.post("/api/translate")
+async def translate_api(payload: dict = Body(...)):
+    """Structured translation helper (Gemini or NLLB via translator facade)."""
+    text = (payload or {}).get("text", "")
+    source_lang = (payload or {}).get("source_lang") or (payload or {}).get("sourceLang") or "en"
+    target_lang = (payload or {}).get("target_lang") or (payload or {}).get("targetLang") or "en"
+    if text is None or str(text).strip() == "":
+        return JSONResponse(status_code=400, content={"error": "text is required."})
+    try:
+        translated = await asyncio.to_thread(
+            translate_text, str(text), str(source_lang), str(target_lang)
+        )
+        from services.translator_service import resolve_translation_provider
+
+        return {
+            "translated_text": translated,
+            "provider": resolve_translation_provider(),
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+        }
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except Exception as exc:
+        from services.gemini_service import GeminiError
+
+        if isinstance(exc, GeminiError):
+            return JSONResponse(
+                status_code=exc.status_code or 502,
+                content={"error": str(exc)},
+            )
+        get_logger("screen_ai.translate").error(
+            "translate failed",
+            extra={"event": "translate_error", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(status_code=500, content={"error": "Translation failed."})
 
 
 @app.post("/api/analyze-video")

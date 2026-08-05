@@ -39,8 +39,26 @@ os.environ.update(
         "WHISPER_WARMUP": "false",
         "PERF_PROFILE": "false",
         "TTS_CONCURRENCY": "2",
+        "TTS_CONCURRENCY_MIN": "1",
+        "TTS_429_MAX_RETRIES": "5",
+        "TTS_BACKOFF_BASE_SECONDS": "0.01",
+        "TTS_BACKOFF_MAX_SECONDS": "0.05",
+        "TTS_BACKOFF_JITTER_RATIO": "0",
+        "TTS_REQUEST_TIMEOUT_SECONDS": "30",
+        "TTS_ADAPTIVE_ENABLED": "true",
+        "TTS_DOWNGRADE_THRESHOLD": "2",
+        "TTS_RECOVERY_SUCCESS_STREAK": "5",
         "TRANSLATION_BATCH_SIZE": "4",
         "JOB_MAX_RETRIES": "2",
+        # Keep unit/integration tests on NLLB path by default; Gemini has dedicated tests.
+        "TRANSLATION_PROVIDER": "nllb",
+        "GEMINI_API_KEY": "",
+        "GEMINI_CLEANUP_TRANSCRIPT": "false",
+        "GEMINI_MAX_RETRIES": "2",
+        "GEMINI_TIMEOUT_SECONDS": "5",
+        "GEMINI_BACKOFF_BASE_SECONDS": "0.01",
+        "GEMINI_BACKOFF_MAX_SECONDS": "0.05",
+        "GEMINI_BACKOFF_JITTER_RATIO": "0",
     }
 )
 
@@ -73,9 +91,33 @@ def _install_ai_stubs():
     # Keep real translator for unit tests that import it; API tests may still load it.
     # Stub elevenlabs client usage
     el = types.ModuleType("services.elevenlabs_service")
+
+    class _Kind(str):
+        pass
+
+    class _TtsErrorKind:
+        RATE_LIMIT = _Kind("rate_limit")
+        RETRYABLE = _Kind("retryable")
+        FATAL = _Kind("fatal")
+
+    class _TtsRequestError(Exception):
+        def __init__(self, message, *, kind, retry_after=None, cause=None):
+            super().__init__(message)
+            self.kind = kind
+            self.retry_after = retry_after
+
     el.get_all_voices = MagicMock(return_value=[])
     el.generate_speech = MagicMock(side_effect=lambda text, filename="x.mp3", voice="george": str(_OUT / filename))
+    el.synthesize_to_file = MagicMock(
+        side_effect=lambda text, filepath, voice="george", timeout=None: (
+            Path(filepath).write_bytes(b"ID3"),
+            str(filepath),
+        )[1]
+    )
     el.client = None
+    el.TtsErrorKind = _TtsErrorKind
+    el.TtsRequestError = _TtsRequestError
+    el.classify_tts_error = MagicMock(return_value=_TtsErrorKind.FATAL)
     sys.modules["services.elevenlabs_service"] = el
 
 

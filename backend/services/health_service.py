@@ -27,6 +27,7 @@ from config import (
     S3_BUCKET,
     REDIS_URL,
     STRICT_STARTUP,
+    GEMINI_API_KEY,
 )
 
 
@@ -204,19 +205,38 @@ def _check_redis() -> dict[str, Any]:
         }
 
 
+def _check_gemini() -> dict[str, Any]:
+    """Gemini is optional; missing key warns but does not fail readiness."""
+    started = time.perf_counter()
+    try:
+        from services import gemini_service
+
+        detail = gemini_service.health_detail()
+        detail["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        return detail
+    except Exception as exc:
+        return {
+            "ok": True,
+            "configured": bool(GEMINI_API_KEY),
+            "warning": str(exc),
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+        }
+
+
 def run_checks(*, include_whisper: bool = True) -> dict[str, Any]:
     checks = {
         "database": _check_database(),
         "storage": _check_storage(),
         "firebase": _check_firebase(),
         "redis": _check_redis(),
+        "gemini": _check_gemini(),
     }
     if include_whisper:
         checks["whisper"] = _check_whisper()
 
     # Required for readiness: database + storage + firebase config.
     # Whisper is required when include_whisper=True (full app).
-    # Redis is optional until a queue is wired.
+    # Redis and Gemini are optional.
     required = ["database", "storage", "firebase"]
     if include_whisper:
         required.append("whisper")
@@ -237,8 +257,13 @@ def run_startup_checks() -> dict[str, Any]:
     print(f"[startup] dependency checks: {status}")
     for name, detail in result["checks"].items():
         flag = "ok" if detail.get("ok") else "FAIL"
-        extra = detail.get("error") or detail.get("message") or ""
+        extra = detail.get("error") or detail.get("message") or detail.get("warning") or ""
         print(f"[startup]  - {name}: {flag} {extra}".rstrip())
+        if name == "gemini" and not detail.get("configured"):
+            print(
+                "[startup]  - gemini: WARN GEMINI_API_KEY is not set "
+                "(Gemini translation/chat disabled; NLLB fallback used when auto)"
+            )
 
     if STRICT_STARTUP and not result["ok"]:
         failed = [n for n in result["required"] if not result["checks"][n].get("ok")]

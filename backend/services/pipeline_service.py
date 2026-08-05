@@ -2,7 +2,7 @@ import os
 import shutil
 import tempfile
 
-from config import PERF_PROFILE, TEMP_DIR
+from config import PERF_PROFILE, TEMP_DIR, GEMINI_CLEANUP_TRANSCRIPT
 from services.ffmpeg_service import extract_audio
 from services.whisper_service import transcribe_audio
 from services.translator_service import (
@@ -11,10 +11,14 @@ from services.translator_service import (
 )
 from services.tts_service import (
     generate_segment_speech,
+    tts_job_dir,
 )
 from services.audio_stitcher_service import merge_audio_segments
 from services.video_renderer_service import replace_audio
 from services.perf_service import stage_timer
+from services.logging_service import get_job_id, get_logger
+
+logger = get_logger("screen_ai.pipeline")
 
 
 async def process_video(
@@ -22,6 +26,7 @@ async def process_video(
     target_language,
     voice="george",
     on_progress=None,
+    job_id=None,
 ):
     def report(stage, message=""):
         if on_progress:
@@ -30,6 +35,8 @@ async def process_video(
     profile: dict = {}
     tts_dir = None
     audio_path = None
+    resolved_job_id = job_id or get_job_id()
+    tts_completed = False
 
     # Step 1 - Extract audio
     report("Audio Extraction", "Extracting audio with FFmpeg")
@@ -41,8 +48,31 @@ async def process_video(
     with stage_timer(profile, "whisper"):
         result = transcribe_audio(audio_path)
 
+    # Optional Gemini transcript cleanup (does not change timing)
+    if GEMINI_CLEANUP_TRANSCRIPT:
+        try:
+            from services import gemini_service
+
+            if gemini_service.is_configured():
+                report("Whisper", "Cleaning transcript with Gemini")
+                with stage_timer(profile, "gemini_cleanup"):
+                    result = gemini_service.cleanup_transcript(result)
+            else:
+                logger.warning(
+                    "GEMINI_CLEANUP_TRANSCRIPT enabled but GEMINI_API_KEY missing",
+                    extra={"event": "gemini_cleanup_skipped"},
+                )
+        except Exception as cleanup_exc:
+            logger.warning(
+                "Gemini transcript cleanup failed; continuing with raw Whisper output",
+                extra={
+                    "event": "gemini_cleanup_failed",
+                    "error_type": type(cleanup_exc).__name__,
+                },
+            )
+
     # Step 3 - Translate complete text
-    report("Translation", "Translating transcript with NLLB")
+    report("Translation", "Translating transcript")
     with stage_timer(profile, "translation"):
         translated_text = translate_text(
             result["full_text"],
@@ -57,16 +87,22 @@ async def process_video(
             target_language,
         )
 
-    # Step 5 - Generate segment audio (controlled concurrency)
+    # Step 5 - Generate segment audio (controlled concurrency + resume)
     report("TTS", f"Generating speech with ElevenLabs (voice={voice})")
-    tts_dir = tempfile.mkdtemp(prefix="tts_", dir=TEMP_DIR)
+    if resolved_job_id:
+        tts_dir = tts_job_dir(resolved_job_id)
+    else:
+        tts_dir = tempfile.mkdtemp(prefix="tts_", dir=TEMP_DIR)
     with stage_timer(profile, "tts"):
         audio_segments = await generate_segment_speech(
             translated_segments,
             language=target_language,
             voice=voice,
             work_dir=tts_dir,
+            job_id=resolved_job_id,
+            on_progress=on_progress,
         )
+    tts_completed = True
 
     # Step 6 - Merge all generated audio
     report("Audio Merge", "Merging TTS audio segments")
@@ -87,7 +123,8 @@ async def process_video(
             os.remove(audio_path)
         except OSError:
             pass
-    if tts_dir and os.path.isdir(tts_dir):
+    # Only remove TTS checkpoints after a fully successful TTS+merge+render path.
+    if tts_completed and tts_dir and os.path.isdir(tts_dir):
         shutil.rmtree(tts_dir, ignore_errors=True)
     # Stitched intermediate audio under OUTPUT_DIR may remain needed? replace_audio
     # consumes paths; remove merged audio if distinct from final video.

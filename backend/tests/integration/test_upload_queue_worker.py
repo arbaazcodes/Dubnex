@@ -13,7 +13,7 @@ def fake_pipeline(monkeypatch, tmp_path):
     out = tmp_path / "out.mp4"
     out.write_bytes(b"mp4-bytes")
 
-    async def _process_video(video_path, target_language, voice="george", on_progress=None):
+    async def _process_video(video_path, target_language, voice="george", on_progress=None, job_id=None):
         if on_progress:
             on_progress("Whisper", "ok")
             on_progress("Translation", "ok")

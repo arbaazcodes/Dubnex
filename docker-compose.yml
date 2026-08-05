@@ -47,7 +47,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis
       JOB_MAX_RETRIES: ${JOB_MAX_RETRIES:-3}
-      TTS_CONCURRENCY: ${TTS_CONCURRENCY:-3}
+      TTS_CONCURRENCY: ${TTS_CONCURRENCY:-1}
       TRANSLATION_BATCH_SIZE: ${TRANSLATION_BATCH_SIZE:-8}
       PERF_PROFILE: ${PERF_PROFILE:-true}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
@@ -55,12 +55,14 @@ services:
       TEMP_DIR: /app/temp
       DATA_DIR: /app/data
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80}
+      # Include Vite (:5173) for local frontend; keep :8080/:80 for compose nginx frontend / prod-like hosts.
+      # Override via host CORS_ORIGINS or project .env without removing these when unset.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80}
       WHISPER_MODEL: ${WHISPER_MODEL:-tiny}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       STRICT_STARTUP: ${STRICT_STARTUP:-false}
-      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_PROJECT_ID: dubnex-ea9c9
     volumes:
       - api_outputs:/app/outputs
       - api_temp:/app/temp
@@ -94,7 +96,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis
       JOB_MAX_RETRIES: ${JOB_MAX_RETRIES:-3}
-      TTS_CONCURRENCY: ${TTS_CONCURRENCY:-3}
+      TTS_CONCURRENCY: ${TTS_CONCURRENCY:-1}
       TRANSLATION_BATCH_SIZE: ${TRANSLATION_BATCH_SIZE:-8}
       WHISPER_WARMUP: ${WHISPER_WARMUP:-true}
       PERF_PROFILE: ${PERF_PROFILE:-true}

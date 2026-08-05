@@ -23,13 +23,27 @@ export interface VoiceSettings {
 export type VoiceProvider = 'ElevenLabs' | 'Custom' | 'Clone';
 export type VoiceSource = 'library' | 'custom' | 'clone';
 
+export type VoiceCategory =
+  | 'Narration'
+  | 'Conversational'
+  | 'Broadcast'
+  | 'Cinematic'
+  | 'Corporate'
+  | 'Audiobook'
+  | 'Social'
+  | 'Multilingual';
+
 export interface LibraryVoice {
   id: string;
   name: string;
   provider: VoiceProvider;
   gender: 'Male' | 'Female' | 'Neutral';
   accent: string;
+  /** Primary display language code (ISO), usually first supported language */
+  language: string;
   supportedLanguages: string[];
+  /** High-level use-case category for the selector UI */
+  category: VoiceCategory;
   tags: string[];
   /** Optional sample URL when a preview endpoint exists */
   previewUrl?: string | null;

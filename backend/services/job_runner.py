@@ -89,6 +89,7 @@ def process_queued_job(payload: dict[str, Any]) -> None:
                     target_language=target_language,
                     voice=voice,
                     on_progress=on_progress,
+                    job_id=job_id,
                 )
             )
             finish_job(job_id, result)

@@ -93,30 +93,26 @@ export default function VoiceLibrary({
   ]);
 
   const handlePreview = (voice: LibraryVoice) => {
-    if (voice.previewUrl) {
-      try {
-        const audio = new Audio(voice.previewUrl);
-        setPreviewingId(voice.id);
-        audio.onended = () => setPreviewingId(null);
-        audio.onerror = () => {
-          setPreviewingId(null);
-          setPreviewNotice(`Preview failed for ${voice.name}.`);
-          window.setTimeout(() => setPreviewNotice(null), 3000);
-        };
-        void audio.play();
-        return;
-      } catch {
-        // fall through to UI-only notice
-      }
+    if (!voice.previewUrl) {
+      setPreviewNotice(`Preview unavailable for “${voice.name}”.`);
+      window.setTimeout(() => setPreviewNotice(null), 2800);
+      return;
     }
-    setPreviewingId(voice.id);
-    setPreviewNotice(
-      `Preview for “${voice.name}” is UI-only until a preview endpoint is available.`
-    );
-    window.setTimeout(() => {
+    try {
+      const audio = new Audio(voice.previewUrl);
+      setPreviewingId(voice.id);
+      audio.onended = () => setPreviewingId(null);
+      audio.onerror = () => {
+        setPreviewingId(null);
+        setPreviewNotice(`Preview failed for ${voice.name}.`);
+        window.setTimeout(() => setPreviewNotice(null), 3000);
+      };
+      void audio.play();
+    } catch {
       setPreviewingId(null);
-      setPreviewNotice(null);
-    }, 2800);
+      setPreviewNotice(`Preview unavailable for “${voice.name}”.`);
+      window.setTimeout(() => setPreviewNotice(null), 2800);
+    }
   };
 
   return (
@@ -129,7 +125,7 @@ export default function VoiceLibrary({
           </h1>
           <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1 max-w-xl">
             Browse ElevenLabs voices, favorite presets, and set the default project voice.
-            Preview is UI-only until a sample endpoint is connected. TTS generation is unchanged.
+            Preview controls are disabled when no sample URL is configured. TTS generation is unchanged.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -301,7 +297,7 @@ export default function VoiceLibrary({
                       {voice.name}
                     </h3>
                     <p className="text-[10px] text-zinc-400 mt-0.5">
-                      {voice.gender} · {voice.accent}
+                      {voice.gender} · {voice.accent} · {voice.category}
                     </p>
                   </div>
                   <button
@@ -364,10 +360,20 @@ export default function VoiceLibrary({
                   <button
                     type="button"
                     onClick={() => handlePreview(voice)}
-                    className="py-2 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wide flex items-center justify-center gap-1.5 bg-zinc-100 dark:bg-zinc-950 border border-zinc-200/60 dark:border-zinc-800 hover:border-emerald-500/40 cursor-pointer"
+                    disabled={!voice.previewUrl}
+                    title={voice.previewUrl ? `Preview ${voice.name}` : 'Preview unavailable'}
+                    className={`py-2 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wide flex items-center justify-center gap-1.5 border ${
+                      voice.previewUrl
+                        ? 'bg-zinc-100 dark:bg-zinc-950 border-zinc-200/60 dark:border-zinc-800 hover:border-emerald-500/40 cursor-pointer'
+                        : 'bg-zinc-100 dark:bg-zinc-950 border-zinc-200/40 dark:border-zinc-800 text-zinc-400 cursor-not-allowed'
+                    }`}
                   >
                     <Volume2 className={`w-3.5 h-3.5 ${isPreviewing ? 'text-emerald-500 animate-pulse' : ''}`} />
-                    {isPreviewing ? 'Playing…' : 'Preview'}
+                    {!voice.previewUrl
+                      ? 'Unavailable'
+                      : isPreviewing
+                        ? 'Playing…'
+                        : 'Preview'}
                   </button>
                   <button
                     type="button"

@@ -23,8 +23,8 @@ test.beforeEach(async ({ page }) => {
 test('login screen is reachable', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText(/Pro Studio Dubbing/i).first()).toBeVisible();
-  // Google sign-in CTA
-  const login = page.getByRole('button', { name: /sign in|google/i }).first();
+  // Google / email / phone sign-in CTA
+  const login = page.getByRole('button', { name: /sign in/i }).first();
   await expect(login).toBeVisible();
 });
 
