@@ -79,7 +79,7 @@ def _resolve_voice_id(voice: str) -> str:
     if not voice_id or str(voice_id).startswith("YOUR_"):
         voice_id = DEFAULT_VOICE_ID
 
-    print(f"[ElevenLabs] Using voice key={voice_key!r} voice_id={voice_id!r}")
+    logger.debug("Resolved voice key=%r -> voice_id=%r", voice_key, voice_id)
     return voice_id
 
 

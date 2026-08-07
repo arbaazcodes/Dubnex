@@ -2,11 +2,12 @@ from contextlib import asynccontextmanager
 
 from services.tts_service import generate_speech
 from services.pipeline_service import process_video
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Body, Request
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Body, Request, HTTPException
 import tempfile
 import shutil
 import os
 import asyncio
+import re
 from services.translator_service import translate_text
 from services.video_renderer_service import replace_audio
 from services.whisper_service import detect_language, transcribe_audio
@@ -16,9 +17,22 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Red
 from fastapi.middleware.cors import CORSMiddleware
 import json
 
-from config import CORS_ORIGINS, TEMP_DIR
+from config import (
+    CORS_ORIGINS,
+    TEMP_DIR,
+    METRICS_TOKEN,
+    MAX_TEXT_LENGTH,
+    MAX_CHAT_MESSAGE_LENGTH,
+    MAX_CHAT_HISTORY_ITEMS,
+    MAX_CHAT_INSTRUCTION_LENGTH,
+    MAX_TRANSCRIBE_PAYLOAD_BYTES,
+    MAX_RENDER_UPLOAD_BYTES,
+    MAX_DETECT_FILENAME_LENGTH,
+)
 from services.secure_media_service import resolve_project_media
-from services.firebase_auth import require_authenticated_user
+from services.firebase_auth import require_authenticated_user, verify_firebase_id_token
+from services.rate_limit import enforce_rate_limit
+from services.security_headers import SecurityHeadersMiddleware
 from services.job_service import (
     create_job,
     update_job,
@@ -70,6 +84,7 @@ app = FastAPI(
 # Last add_middleware is outermost. CORS must be outermost so ACAO headers
 # are always applied (including on preflight / error responses).
 app.add_middleware(ObservabilityMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -80,6 +95,26 @@ app.add_middleware(
 )
 
 # Public /outputs static mount removed — use /api/projects/{id}/video|download
+
+_SAFE_WORD_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _clean_text(value: object, limit: int) -> str:
+    """Coerce to str, strip control chars, cap length (log/header injection guard)."""
+    text = "" if value is None else str(value)
+    cleaned = "".join(ch for ch in text if ch >= " " or ch in "\t\n")
+    return cleaned[:limit]
+
+
+def _require_metrics_access(request: Request) -> None:
+    """/metrics auth: static METRICS_TOKEN bearer (Prometheus) OR Firebase ID token."""
+    if METRICS_TOKEN:
+        auth = request.headers.get("Authorization") or ""
+        if auth.lower() == f"bearer {METRICS_TOKEN}":
+            return
+        if request.query_params.get("token") == METRICS_TOKEN:
+            return
+    require_authenticated_user(request)
 
 
 @app.get("/")
@@ -106,23 +141,34 @@ def health_ready():
 
 
 @app.get("/health/detailed")
-def health_detailed():
-    """Detailed dependency report (same payload as readiness)."""
+def health_detailed(request: Request):
+    """Detailed dependency report (same payload as readiness).
+
+    Authenticated only — exposes stack details (providers, model names, latency).
+    Use the public /health and /ready probes for infrastructure checks.
+    """
+    user = require_authenticated_user(request)
     result = run_checks(include_whisper=True)
     code = 200 if result["ok"] else 503
     return JSONResponse(status_code=code, content=result)
 
 
 @app.get("/metrics")
-def prometheus_metrics():
-    """Prometheus scrape endpoint (Grafana-ready)."""
+def prometheus_metrics(request: Request):
+    """Prometheus scrape endpoint (Grafana-ready).
+
+    Requires a Firebase ID token, or a static METRICS_TOKEN bearer when configured.
+    """
+    _require_metrics_access(request)
     body, content_type = metrics_payload()
     return Response(content=body, media_type=content_type)
 
 @app.post("/job")
-def new_job():
+def new_job(request: Request):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
 
-    job_id = create_job()
+    job_id = create_job(owner_id=user.uid)
 
     return {
         "job_id": job_id,
@@ -130,12 +176,14 @@ def new_job():
     }
 
 @app.post("/api/detect-language")
-async def detect_language_audio(payload: dict = Body(...)):
-    filename = (payload or {}).get("filename", "")
-    sample_text = (payload or {}).get("sampleText", "")
+async def detect_language_audio(request: Request, payload: dict = Body(...)):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
+    filename = _clean_text((payload or {}).get("filename", ""), MAX_DETECT_FILENAME_LENGTH)
+    sample_text = _clean_text((payload or {}).get("sampleText", ""), MAX_TEXT_LENGTH)
 
-    lowered_name = (filename or "").lower()
-    lowered_text = (sample_text or "").lower()
+    lowered_name = filename.lower()
+    lowered_text = sample_text.lower()
 
     if "french" in lowered_name or "paris" in lowered_name or "bonjour" in lowered_text or "oui" in lowered_text:
         detected = "French"
@@ -160,7 +208,9 @@ async def detect_language_audio(payload: dict = Body(...)):
 
 
 @app.post("/detect-language")
-async def detect_language_audio_upload(file: UploadFile = File(...)):
+async def detect_language_audio_upload(request: Request, file: UploadFile = File(...)):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp:
 
@@ -176,7 +226,9 @@ async def detect_language_audio_upload(file: UploadFile = File(...)):
 
 
 @app.post("/detect-video-language")
-async def detect_video_language(file: UploadFile = File(...)):
+async def detect_video_language(request: Request, file: UploadFile = File(...)):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
 
@@ -195,16 +247,25 @@ async def detect_video_language(file: UploadFile = File(...)):
     return result
 
 @app.post("/api/transcribe-audio")
-async def transcribe_audio_api(payload: dict = Body(...)):
+async def transcribe_audio_api(request: Request, payload: dict = Body(...)):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
     audio = (payload or {}).get("audio")
     if not audio:
         return JSONResponse(status_code=400, content={"error": "Audio data is required."})
+    if not isinstance(audio, str) or len(audio) > MAX_TRANSCRIBE_PAYLOAD_BYTES:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Audio payload is too large or invalid."},
+        )
 
     return {"text": "This is a FastAPI-backed transcription placeholder. Upload a real audio pipeline implementation to replace this stub."}
 
 
 @app.post("/transcribe-video")
-async def transcribe_video(file: UploadFile = File(...)):
+async def transcribe_video(request: Request, file: UploadFile = File(...)):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
         shutil.copyfileobj(file.file, temp)
@@ -221,10 +282,18 @@ async def transcribe_video(file: UploadFile = File(...)):
 
 @app.post("/translate")
 async def translate(
+    request: Request,
     text: str,
     source_lang: str,
     target_lang: str
 ):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
+    if not isinstance(text, str) or len(text) > MAX_TEXT_LENGTH:
+        return JSONResponse(status_code=400, content={"error": "text is too long."})
+    for lang in (source_lang, target_lang):
+        if not isinstance(lang, str) or len(lang) > 32 or not _SAFE_WORD_RE.match(lang):
+            return JSONResponse(status_code=400, content={"error": "Invalid language code."})
     translated = translate_text(
         text,
         source_lang,
@@ -235,12 +304,23 @@ async def translate(
         "translated_text": translated
     }
 @app.get("/job/{job_id}")
-def job_status(job_id: str):
-
-    return get_job(job_id)
+def job_status(job_id: str, request: Request):
+    """Job detail for the authenticated owner (mirrors /api/projects/{id} authz)."""
+    user = require_authenticated_user(request)
+    job = get_job(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"detail": "Job not found"})
+    owner = job.get("owner_id") or (job.get("metadata") or {}).get("owner_id")
+    if not owner or owner != user.uid:
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    return job
 
 @app.post("/generate-audio")
-async def generate_audio(text: str):
+async def generate_audio(request: Request, text: str):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
+    if not isinstance(text, str) or len(text) > MAX_TEXT_LENGTH:
+        return JSONResponse(status_code=400, content={"error": "text is too long."})
     filepath = await generate_speech(text)
     return FileResponse(
         filepath,
@@ -249,10 +329,14 @@ async def generate_audio(text: str):
     )
 
 @app.post("/api/chat")
-async def chat_api(payload: dict = Body(...)):
+async def chat_api(request: Request, payload: dict = Body(...)):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
     message = (payload or {}).get("message", "")
-    if not message:
+    if not isinstance(message, str) or not message.strip():
         return JSONResponse(status_code=400, content={"error": "Message is required."})
+    if len(message) > MAX_CHAT_MESSAGE_LENGTH:
+        return JSONResponse(status_code=400, content={"error": "Message is too long."})
 
     from services import gemini_service
     from services.gemini_service import GeminiError
@@ -266,9 +350,26 @@ async def chat_api(payload: dict = Body(...)):
         )
 
     history = (payload or {}).get("history") or []
+    if not isinstance(history, list) or len(history) > MAX_CHAT_HISTORY_ITEMS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "History is too large or invalid."},
+        )
     system_instruction = (payload or {}).get("systemInstruction")
+    if system_instruction is not None and (
+        not isinstance(system_instruction, str)
+        or len(system_instruction) > MAX_CHAT_INSTRUCTION_LENGTH
+    ):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "systemInstruction is too long or invalid."},
+        )
     model_name = (payload or {}).get("modelName")
     role = (payload or {}).get("role")
+    if model_name is not None and not isinstance(model_name, str):
+        return JSONResponse(status_code=400, content={"error": "modelName must be a string."})
+    if role is not None and not isinstance(role, str):
+        return JSONResponse(status_code=400, content={"error": "role must be a string."})
 
     try:
         text = await asyncio.to_thread(
@@ -306,13 +407,17 @@ async def chat_api(payload: dict = Body(...)):
 
 
 @app.post("/api/translate")
-async def translate_api(payload: dict = Body(...)):
+async def translate_api(request: Request, payload: dict = Body(...)):
     """Structured translation helper (Gemini or NLLB via translator facade)."""
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
     text = (payload or {}).get("text", "")
     source_lang = (payload or {}).get("source_lang") or (payload or {}).get("sourceLang") or "en"
     target_lang = (payload or {}).get("target_lang") or (payload or {}).get("targetLang") or "en"
-    if text is None or str(text).strip() == "":
+    if text is None or not isinstance(text, str) or str(text).strip() == "":
         return JSONResponse(status_code=400, content={"error": "text is required."})
+    if len(text) > MAX_TEXT_LENGTH:
+        return JSONResponse(status_code=400, content={"error": "text is too long."})
     try:
         translated = await asyncio.to_thread(
             translate_text, str(text), str(source_lang), str(target_lang)
@@ -343,9 +448,11 @@ async def translate_api(payload: dict = Body(...)):
 
 
 @app.post("/api/analyze-video")
-async def analyze_video_api(payload: dict = Body(...)):
-    title = (payload or {}).get("title", "Active Video")
-    duration = (payload or {}).get("duration", "00:30")
+async def analyze_video_api(request: Request, payload: dict = Body(...)):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
+    title = _clean_text((payload or {}).get("title", "Active Video"), 200)
+    duration = _clean_text((payload or {}).get("duration", "00:30"), 32)
     return {
         "analysis": f"### Analysis\n- Title: {title}\n- Duration: {duration}\n- Source: FastAPI backend"
     }
@@ -375,7 +482,19 @@ async def process_video_api(
 
     max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(500 * 1024 * 1024)))
     user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
     owner_id = user.uid
+
+    # Validate free-text params before creating a job (bound cost + metadata injection).
+    if not isinstance(target_lang, str) or len(target_lang) > 32 or not _SAFE_WORD_RE.match(target_lang):
+        return JSONResponse(status_code=400, content={"error": "Invalid target_lang."})
+    if not voice:
+        voice = "george"
+    if not isinstance(voice, str) or len(voice) > 64 or not _SAFE_WORD_RE.match(voice):
+        return JSONResponse(status_code=400, content={"error": "Invalid voice."})
+    duration = _clean_text(duration, 64)
+    resolution = _clean_text(resolution, 64)
+    file_size = _clean_text(file_size, 64)
 
     # Create job first so we can stream the upload once into a durable worker path
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -676,7 +795,15 @@ async def delete_project(project_id: str, request: Request):
 
 
 @app.get("/events/{job_id}")
-async def job_events(job_id: str):
+async def job_events(job_id: str, request: Request):
+    user = require_authenticated_user(request)
+    job = get_job(job_id, refresh=True)
+    if not job:
+        return JSONResponse(status_code=404, content={"detail": "Job not found"})
+    owner = job.get("owner_id") or (job.get("metadata") or {}).get("owner_id")
+    if not owner or owner != user.uid:
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
     async def event_stream():
         sent_history = 0
         last_fingerprint = None
@@ -751,13 +878,17 @@ async def job_events(job_id: str):
 
 
 @app.get("/voices")
-def voices():
+def voices(request: Request):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
     return {
         "voices": get_all_voices()
     }
 
 @app.get("/eleven-test")
-def eleven_test():
+def eleven_test(request: Request):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
 
     filepath = generate_speech(
         text="Hello Arbaaz. This is ElevenLabs speaking.",
@@ -771,7 +902,8 @@ def eleven_test():
     )
 
 @app.get("/api/pipeline-sse")
-async def pipeline_sse(jobId: str):
+async def pipeline_sse(jobId: str, request: Request):
+    user = require_authenticated_user(request)
     async def event_stream():
         payload = {
             "id": jobId,
@@ -787,6 +919,16 @@ async def pipeline_sse(jobId: str):
 @app.websocket("/live")
 async def live_websocket(websocket: WebSocket):
     await websocket.accept()
+    # Browsers cannot set WS headers, so auth is carried as ?token=<Firebase ID token>.
+    token = (websocket.query_params.get("token") or "").strip()
+    if not token:
+        await websocket.close(code=4401)
+        return
+    try:
+        verify_firebase_id_token(token)
+    except HTTPException:
+        await websocket.close(code=4401)
+        return
     try:
         while True:
             await websocket.receive_text()
@@ -797,9 +939,12 @@ async def live_websocket(websocket: WebSocket):
 
 @app.post("/render-video")
 async def render_video(
+    request: Request,
     video: UploadFile = File(...),
     audio: UploadFile = File(...)
 ):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
     import uuid
 
     temp_dir = TEMP_DIR
@@ -810,15 +955,26 @@ async def render_video(
     if ".." in safe_video_name or ".." in safe_audio_name:
         return JSONResponse(status_code=400, content={"error": "Invalid filename."})
 
+    allowed_video_ext = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    allowed_audio_ext = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm"}
+    video_ext = os.path.splitext(safe_video_name)[1].lower()
+    audio_ext = os.path.splitext(safe_audio_name)[1].lower()
+    if video_ext not in allowed_video_ext or audio_ext not in allowed_audio_ext:
+        return JSONResponse(status_code=400, content={"error": "Unsupported file type."})
+
     video_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{safe_video_name}")
     audio_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{safe_audio_name}")
 
     try:
         with open(video_path, "wb") as buffer:
             shutil.copyfileobj(video.file, buffer)
+        if os.path.getsize(video_path) > MAX_RENDER_UPLOAD_BYTES:
+            return JSONResponse(status_code=413, content={"error": "Video file too large."})
 
         with open(audio_path, "wb") as buffer:
             shutil.copyfileobj(audio.file, buffer)
+        if os.path.getsize(audio_path) > MAX_RENDER_UPLOAD_BYTES:
+            return JSONResponse(status_code=413, content={"error": "Audio file too large."})
 
         output_video = replace_audio(video_path, audio_path)
 

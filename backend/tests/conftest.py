@@ -131,6 +131,16 @@ def auth_user():
     return AuthenticatedUser(uid="user-test-1", email="t@example.com", name="Tester")
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Rate-limit counters are process-global; give every test a clean budget."""
+    from services.rate_limit import reset_rate_limiter
+
+    reset_rate_limiter()
+    yield
+    reset_rate_limiter()
+
+
 @pytest.fixture
 def authed_client(auth_user, monkeypatch):
     """FastAPI TestClient with Firebase auth bypassed."""

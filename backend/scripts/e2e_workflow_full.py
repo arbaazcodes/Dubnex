@@ -13,7 +13,13 @@ from pathlib import Path
 
 API = "http://127.0.0.1:8000"
 FE = "http://localhost:5173"
-API_KEY = "AIzaSyDhoQ3es3hqfWQSaJZciAFr9vexLyr7WY8"
+# Never hardcode the Firebase Web API key — read it from the environment.
+API_KEY = os.environ.get("FIREBASE_WEB_API_KEY", "").strip()
+if not API_KEY:
+    raise SystemExit(
+        "FIREBASE_WEB_API_KEY is required for the E2E script (Firebase Web API "
+        "key from the Firebase console — pass it as an env var, never commit it)."
+    )
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs"
 TEMP = ROOT / "temp"

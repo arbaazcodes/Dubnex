@@ -193,3 +193,35 @@ VOICE_MAP = {
     "daniel": os.getenv("ELEVENLABS_VOICE_DANIEL", "onwK4e9ZLuTAKqWW03F9"),
 }
 
+# --- API rate limiting (per-user + per-IP) ---
+# Process-local fixed-window budgets applied to paid / resource-heavy endpoints.
+# Single-replica deployments keep counters in-process. For multi-replica
+# production, swap the store in services/rate_limit.py for Redis using the same
+# interface — budgets stay configured here via env.
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
+RATE_LIMIT_MAX_PER_USER = max(1, int(os.getenv("RATE_LIMIT_MAX_PER_USER", "60")))
+RATE_LIMIT_MAX_PER_IP = max(1, int(os.getenv("RATE_LIMIT_MAX_PER_IP", "120")))
+
+# --- Security hardening: request/upload caps + protected-ops auth ---
+# Paid/resource-heavy payloads are capped to bound cost + abuse. Reject, don't truncate.
+MAX_TEXT_LENGTH = max(1, int(os.getenv("MAX_TEXT_LENGTH", "50000")))
+MAX_CHAT_MESSAGE_LENGTH = max(1, int(os.getenv("MAX_CHAT_MESSAGE_LENGTH", "10000")))
+MAX_CHAT_HISTORY_ITEMS = max(1, int(os.getenv("MAX_CHAT_HISTORY_ITEMS", "50")))
+MAX_CHAT_INSTRUCTION_LENGTH = max(1, int(os.getenv("MAX_CHAT_INSTRUCTION_LENGTH", "4000")))
+MAX_TRANSCRIBE_PAYLOAD_BYTES = max(
+    1, int(os.getenv("MAX_TRANSCRIBE_PAYLOAD_BYTES", str(8 * 1024 * 1024)))
+)
+MAX_RENDER_UPLOAD_BYTES = max(
+    1, int(os.getenv("MAX_RENDER_UPLOAD_BYTES", str(200 * 1024 * 1024)))
+)
+MAX_DETECT_FILENAME_LENGTH = max(1, int(os.getenv("MAX_DETECT_FILENAME_LENGTH", "255")))
+# When set, /metrics accepts this bearer token (for Prometheus scrapers) in
+# addition to a Firebase ID token. Empty = Firebase auth only.
+METRICS_TOKEN = (os.getenv("METRICS_TOKEN") or "").strip()
+

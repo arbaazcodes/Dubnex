@@ -17,11 +17,21 @@ function apiOriginForUrl(): string {
   return "http://127.0.0.1:8000";
 }
 
-export function getWebSocketUrl(path: string) {
+export async function getWebSocketUrl(path: string, withAuth = false) {
   const base = new URL(apiOriginForUrl());
   const wsProtocol = base.protocol === "https:" ? "wss:" : "ws:";
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${wsProtocol}//${base.host}${normalizedPath}`;
+  const url = `${wsProtocol}//${base.host}${normalizedPath}`;
+  // Browsers cannot set headers on WebSocket; carry the Firebase ID token as ?token=.
+  if (withAuth) {
+    const token = await getIdToken(false);
+    if (token) {
+      const u = new URL(url);
+      u.searchParams.set("token", token);
+      return u.toString();
+    }
+  }
+  return url;
 }
 
 export type TranslateVideoMeta = {
@@ -31,7 +41,7 @@ export type TranslateVideoMeta = {
   fileSize?: string;
 };
 
-async function authHeaders(extra?: HeadersInit): Promise<HeadersInit> {
+export async function authHeaders(extra?: HeadersInit): Promise<HeadersInit> {
   const token = await getIdToken(false);
   const headers: Record<string, string> = {
     ...(extra as Record<string, string> | undefined),
