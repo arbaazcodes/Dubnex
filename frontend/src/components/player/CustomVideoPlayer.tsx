@@ -96,7 +96,7 @@ export default function CustomVideoPlayer({ project, onEditSegment }: CustomVide
     if (isPlaying) {
       videoRef.current.pause();
     } else {
-      videoRef.current.play().catch(err => console.log('Video playback error:', err));
+      videoRef.current.play().catch(err => console.warn('Video playback error:', err));
     }
     setIsPlaying(!isPlaying);
   };

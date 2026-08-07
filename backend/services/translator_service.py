@@ -102,7 +102,6 @@ def _ensure_nllb():
         "Loading NLLB translation model",
         extra={"event": "nllb_load", "model": MODEL_NAME},
     )
-    print("Loading Translation Model...")
     _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     _model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
     if torch.cuda.is_available():
@@ -110,7 +109,6 @@ def _ensure_nllb():
         _device = "cuda"
     else:
         _device = "cpu"
-    print(f"Translation Model Loaded ({_device})")
 
 
 def _translate_batch_nllb(

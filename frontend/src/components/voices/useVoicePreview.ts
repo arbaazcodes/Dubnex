@@ -11,6 +11,9 @@ export function useVoicePreview() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [state, setState] = useState<PreviewState>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  const clearError = useCallback(() => setError(null), []);
 
   const stop = useCallback(() => {
     const audio = audioRef.current;
@@ -22,6 +25,7 @@ export function useVoicePreview() {
     }
     setActiveId(null);
     setState('idle');
+    setError(null);
   }, []);
 
   useEffect(() => () => stop(), [stop]);
@@ -63,7 +67,9 @@ export function useVoicePreview() {
         audioRef.current = null;
       };
       const onError = () => {
+        // stop() clears error internally, so surface the message afterwards.
         stop();
+        setError(`Preview failed to load for “${voice.name}”.`);
       };
 
       audio.addEventListener('ended', onEnded);
@@ -84,5 +90,5 @@ export function useVoicePreview() {
   const isPlaying = (id: string) => activeId === id && state === 'playing';
   const isPaused = (id: string) => activeId === id && state === 'paused';
 
-  return { toggle, stop, activeId, state, isLoading, isPlaying, isPaused };
+  return { toggle, stop, activeId, state, isLoading, isPlaying, isPaused, error, clearError };
 }
