@@ -1,8 +1,41 @@
-// useChat — AI Studio suite: Gemini chatbot, video analyst, mic dubbing recorder, live voice session.
+// useChat — AI Studio suite: AI chatbot, video analyst, transcript intelligence, mic dubbing recorder, live voice session.
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { API_BASE, authHeaders, getWebSocketUrl } from '../services/api';
-import type { Project } from '../types';
+import type { Project, TranscriptSegment } from '../types';
 import type { VideoMetadata } from './useUpload';
+
+export interface TranscriptAnalysisResult {
+  provider?: string;
+  topic?: string;
+  tone?: string;
+  speaking_style?: string;
+  audience?: string;
+  key_points?: string[];
+  unclear_sections?: string[];
+  quality?: string;
+  translation_risks?: string[];
+}
+
+export interface ImprovedTranscriptResult {
+  improved_text: string;
+  changes?: string;
+  provider?: string;
+}
+
+export interface ImprovedTranslationSegment {
+  id: string;
+  original: string;
+  translated: string;
+  improved_translation: string;
+  note?: string;
+}
+
+export interface ImprovedTranslationResult {
+  segments: ImprovedTranslationSegment[];
+  summary?: string;
+  provider?: string;
+}
 
 interface UseChatOptions {
   activeProject: Project | null;
@@ -14,19 +47,17 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
 
   // 1. Chatbot states
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string; timestamp: string }[]>([
-    { role: 'assistant', content: "Hello! I am your Pro Studio Dubbing Production Assistant. How can I assist you with your translations, voice models, or script tuning today?", timestamp: new Date().toLocaleTimeString() }
+    { role: 'assistant', content: "Hello! I'm your Dubnex AI assistant. I can help with translations, voice selection, and script tuning. What would you like to work on?", timestamp: new Date().toLocaleTimeString() }
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatRole, setChatRole] = useState<'director' | 'language' | 'coach'>('director');
   const [chatModel, setChatModel] = useState<'gemini-3.1-pro-preview' | 'gemini-3.5-flash' | 'gemini-3.1-flash-lite'>('gemini-3.5-flash');
-  const [chatThinking, setChatThinking] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
 
   // 2. Video Analysis & Audio Transcribing states
   const [videoAnalysis, setVideoAnalysis] = useState<string | null>(null);
   const [analystQuery, setAnalystQuery] = useState('');
   const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [analysisThinking, setAnalysisThinking] = useState(false);
 
   // Mic dubbing recorder states
   const [recording, setRecording] = useState(false);
@@ -39,6 +70,19 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
   const [liveVoiceActive, setLiveVoiceActive] = useState(false);
   const [liveCaptions, setLiveCaptions] = useState<string[]>([]);
   const [liveStatusText, setLiveStatusText] = useState('Disconnected');
+
+  // 4. Transcript Intelligence states (analysis / improve transcript / improve translation)
+  const [transcriptAnalysis, setTranscriptAnalysis] = useState<TranscriptAnalysisResult | null>(null);
+  const [transcriptAnalysisLoading, setTranscriptAnalysisLoading] = useState(false);
+  const [transcriptAnalysisError, setTranscriptAnalysisError] = useState<string | null>(null);
+
+  const [improvedTranscript, setImprovedTranscript] = useState<ImprovedTranscriptResult | null>(null);
+  const [improveTranscriptLoading, setImproveTranscriptLoading] = useState(false);
+  const [improveTranscriptError, setImproveTranscriptError] = useState<string | null>(null);
+
+  const [improvedTranslation, setImprovedTranslation] = useState<ImprovedTranslationResult | null>(null);
+  const [improveTranslationLoading, setImproveTranslationLoading] = useState(false);
+  const [improveTranslationError, setImproveTranslationError] = useState<string | null>(null);
 
   // Refs
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -64,13 +108,13 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
     setChatLoading(true);
 
     try {
-      let sysInstruction = "You are Pro Studio Dubbing's supportive AI Dubbing Consultant.";
+      let sysInstruction = "You are Dubnex's supportive AI Dubbing Consultant.";
       if (chatRole === 'director') {
-        sysInstruction = "You are Pro Studio Dubbing's Executive Dubbing Director. Assist the user with speech pacing, cinematic voice selection, tone delivery, and theatrical translations.";
+        sysInstruction = "You are Dubnex's Executive Dubbing Director. Assist the user with speech pacing, cinematic voice selection, tone delivery, and theatrical translations.";
       } else if (chatRole === 'language') {
-        sysInstruction = "You are Pro Studio Dubbing's Language Specialist. Help localise script segments, resolve complex idioms, match dialect timings, and translate content naturally.";
+        sysInstruction = "You are Dubnex's Language Specialist. Help localise script segments, resolve complex idioms, match dialect timings, and translate content naturally.";
       } else if (chatRole === 'coach') {
-        sysInstruction = "You are Pro Studio Dubbing's XTTS Voice Coach. Give advice on speed, pitch, emotion, and accent alignment rules.";
+        sysInstruction = "You are Dubnex's Voice Coach. Give advice on voice selection, pacing, and delivery for natural-sounding dubs.";
       }
 
       const res = await fetch(`${API_BASE}/api/chat`, {
@@ -81,8 +125,7 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
           message: userMsg,
           modelName: chatModel,
           systemInstruction: sysInstruction,
-          role: chatRole,
-          useHighThinking: chatThinking
+          role: chatRole
         })
       });
 
@@ -93,7 +136,8 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
       setChatMessages(prev => [...prev, { role: 'assistant', content: data.text || 'Error obtaining response.', timestamp: new Date().toLocaleTimeString() }]);
     } catch (err) {
       console.error("Chat error:", err);
-      setChatMessages(prev => [...prev, { role: 'assistant', content: "Unable to reach Gemini assistant. Please check connection.", timestamp: new Date().toLocaleTimeString() }]);
+      const reason = err instanceof Error ? err.message : 'Please check your connection and try again.';
+      setChatMessages(prev => [...prev, { role: 'assistant', content: `Sorry, I couldn't respond: ${reason}`, timestamp: new Date().toLocaleTimeString() }]);
     } finally {
       setChatLoading(false);
     }
@@ -111,8 +155,7 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
           title: videoMetadata?.name || "Active Video",
           duration: videoMetadata?.duration || "00:30",
           transcript: activeProject?.transcript || [],
-          query: analystQuery,
-          useHighThinking: analysisThinking
+          query: analystQuery
         })
       });
       const data = await res.json();
@@ -123,6 +166,139 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
     } finally {
       setAnalysisLoading(false);
     }
+  };
+
+  // TRANSCRIPT INTELLIGENCE ACTIONS
+  const transcriptText = () =>
+    (activeProject?.transcript ?? [])
+      .map((seg) => seg.text)
+      .filter(Boolean)
+      .join('\n');
+
+  const runTranscriptAnalysis = async () => {
+    const text = transcriptText();
+    if (!text.trim()) {
+      setTranscriptAnalysisError('No transcript is available for this project yet.');
+      return;
+    }
+    setTranscriptAnalysisLoading(true);
+    setTranscriptAnalysis(null);
+    setTranscriptAnalysisError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/analyze-transcript`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ transcript: text }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || data?.detail || `Transcript analysis failed (HTTP ${res.status}).`);
+      }
+      setTranscriptAnalysis(data as TranscriptAnalysisResult);
+    } catch (err) {
+      console.error("Transcript analysis error:", err);
+      setTranscriptAnalysisError(err instanceof Error ? err.message : 'Transcript analysis failed.');
+    } finally {
+      setTranscriptAnalysisLoading(false);
+    }
+  };
+
+  const runImproveTranscript = async () => {
+    const text = transcriptText();
+    if (!text.trim()) {
+      setImproveTranscriptError('No transcript is available for this project yet.');
+      return;
+    }
+    setImproveTranscriptLoading(true);
+    setImprovedTranscript(null);
+    setImproveTranscriptError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/improve-transcript`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ transcript: text }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || data?.detail || `Transcript improvement failed (HTTP ${res.status}).`);
+      }
+      setImprovedTranscript({
+        improved_text: data.improved_text || '',
+        changes: data.changes,
+        provider: data.provider,
+      });
+    } catch (err) {
+      console.error("Improve transcript error:", err);
+      setImproveTranscriptError(err instanceof Error ? err.message : 'Transcript improvement failed.');
+    } finally {
+      setImproveTranscriptLoading(false);
+    }
+  };
+
+  const runImproveTranslation = async () => {
+    const segments = (activeProject?.transcript ?? []).filter(
+      (seg) => seg.text?.trim() && seg.translatedText?.trim()
+    );
+    if (!segments.length) {
+      setImproveTranslationError('No translated segments are available for this project yet.');
+      return;
+    }
+    setImproveTranslationLoading(true);
+    setImprovedTranslation(null);
+    setImproveTranslationError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/improve-translation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({
+          segments: segments.map((seg) => ({
+            id: seg.id,
+            original: seg.text,
+            translated: seg.translatedText,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || data?.detail || `Translation improvement failed (HTTP ${res.status}).`);
+      }
+      setImprovedTranslation(data as ImprovedTranslationResult);
+    } catch (err) {
+      console.error("Improve translation error:", err);
+      setImproveTranslationError(err instanceof Error ? err.message : 'Translation improvement failed.');
+    } finally {
+      setImproveTranslationLoading(false);
+    }
+  };
+
+  /** Map the improved (whole-transcript) text back onto segments. Only safe when
+   *  line counts match the segment count (the improve prompt preserves structure);
+   *  otherwise the caller should use Copy instead. Returns null when unsafe. */
+  const buildAppliedTranscript = (): TranscriptSegment[] | null => {
+    if (!improvedTranscript || !activeProject?.transcript) return null;
+    const lines = improvedTranscript.improved_text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const original = activeProject.transcript;
+    if (lines.length !== original.length) return null;
+    return original.map((seg, i) => ({ ...seg, text: lines[i] ?? seg.text }));
+  };
+
+  /** Map improved translations back onto the project transcript by segment id. */
+  const buildAppliedTranslation = (): TranscriptSegment[] | null => {
+    if (!improvedTranslation?.segments || !activeProject?.transcript) return null;
+    const byId = new Map<string, string>();
+    for (const seg of improvedTranslation.segments) {
+      byId.set(String(seg.id), seg.improved_translation);
+    }
+    let changed = false;
+    const next = activeProject.transcript.map((seg) => {
+      const improved = byId.get(String(seg.id));
+      if (improved && improved !== seg.translatedText) {
+        changed = true;
+        return { ...seg, translatedText: improved, isEdited: true };
+      }
+      return seg;
+    });
+    return changed ? next : null;
   };
 
   // MICROPHONE RECORDER ACTIONS
@@ -155,7 +331,9 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
       }, 1000);
     } catch (err) {
       console.error("Could not access microphone", err);
-      alert("Microphone access denied or unavailable.");
+      toast.error("Microphone access denied or unavailable", {
+        description: "Check your browser permissions and try again.",
+      });
     }
   };
 
@@ -194,6 +372,9 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
       setTranscribedText(data.text || "No speech detected.");
     } catch (e) {
       console.error("Transcribe failed", e);
+      toast.error("Transcription failed", {
+        description: "The backend could not transcribe this recording. Try again.",
+      });
     } finally {
       setTranscribing(false);
     }
@@ -213,7 +394,7 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
       }
     } else {
       // Connect
-      setLiveStatusText('Connecting to Gemini Live...');
+      setLiveStatusText('Connecting to voice session...');
       setLiveCaptions([]);
       try {
         const ws = new WebSocket(await getWebSocketUrl('/live', true));
@@ -221,8 +402,8 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
 
         ws.onopen = () => {
           setLiveVoiceActive(true);
-          setLiveStatusText('Connected to Live Session');
-          setLiveCaptions(["Gemini Live active. Speak now..."]);
+          setLiveStatusText('Connected to voice session');
+          setLiveCaptions(["Voice session active. Speak now..."]);
         };
 
         ws.onmessage = (event) => {
@@ -295,8 +476,6 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
     setChatRole,
     chatModel,
     setChatModel,
-    chatThinking,
-    setChatThinking,
     chatLoading,
     setChatLoading,
     handleSendChatMessage,
@@ -307,9 +486,21 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
     setAnalystQuery,
     analysisLoading,
     setAnalysisLoading,
-    analysisThinking,
-    setAnalysisThinking,
     runVideoAnalysis,
+    transcriptAnalysis,
+    transcriptAnalysisLoading,
+    transcriptAnalysisError,
+    runTranscriptAnalysis,
+    improvedTranscript,
+    improveTranscriptLoading,
+    improveTranscriptError,
+    runImproveTranscript,
+    improvedTranslation,
+    improveTranslationLoading,
+    improveTranslationError,
+    runImproveTranslation,
+    buildAppliedTranscript,
+    buildAppliedTranslation,
     recording,
     recordingDuration,
     audioBlob,

@@ -50,10 +50,6 @@ interface DashboardViewProps {
     recentlyUsedVoiceIds: string[];
     handleToggleFavoriteVoice: (voiceId: string) => void;
     handleSetDefaultVoice: (voice: LibraryVoice) => void;
-    voiceSettings: VoiceSettings;
-    setVoiceSettings: (settings: VoiceSettings) => void;
-    elevenLabsKey: string;
-    setElevenLabsKey: (key: string) => void;
   };
   projectsData: {
     projects: Project[];
@@ -121,10 +117,6 @@ export default function DashboardView(props: DashboardViewProps) {
       recentlyUsedVoiceIds,
       handleToggleFavoriteVoice,
       handleSetDefaultVoice,
-      voiceSettings,
-      setVoiceSettings,
-      elevenLabsKey,
-      setElevenLabsKey,
     },
     projectsData: {
       projects,
@@ -180,10 +172,10 @@ export default function DashboardView(props: DashboardViewProps) {
           </div>
           <div className="flex flex-col">
             <span className="text-xs font-mono tracking-widest font-extrabold text-zinc-900 dark:text-white uppercase leading-none">
-              Pro Studio Dubbing
+              Dubnex
             </span>
             <span className="text-[9px] text-zinc-400 dark:text-zinc-500 font-mono tracking-wider mt-0.5 uppercase">
-              PRO STUDIO DUBBING ENVIRONMENT
+              AI Video Translation & Dubbing
             </span>
           </div>
         </div>
@@ -242,12 +234,13 @@ export default function DashboardView(props: DashboardViewProps) {
                   {user.email || user.phoneNumber || 'Signed in'}
                 </span>
               </div>
-              <button 
+              <button
                 onClick={handleLogout}
                 className="ml-1.5 p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-400 hover:text-rose-500 rounded-full transition-colors cursor-pointer"
                 title="Logout"
+                aria-label="Logout"
               >
-                <LogOut className="w-3 h-3" />
+                <LogOut className="w-3 h-3" aria-hidden />
               </button>
             </div>
           ) : (
@@ -268,15 +261,16 @@ export default function DashboardView(props: DashboardViewProps) {
             onClick={toggleTheme}
             className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-600 dark:text-zinc-300 rounded-xl transition-all cursor-pointer"
             title={themeMode === 'dark' ? 'Toggle Light Mode' : 'Toggle Dark Mode'}
+            aria-label={themeMode === 'dark' ? 'Toggle Light Mode' : 'Toggle Dark Mode'}
           >
-            {themeMode === 'dark' ? <Sun className="w-4.5 h-4.5 text-amber-400" /> : <Moon className="w-4.5 h-4.5 text-zinc-700" />}
+            {themeMode === 'dark' ? <Sun className="w-4.5 h-4.5 text-amber-400" aria-hidden /> : <Moon className="w-4.5 h-4.5 text-zinc-700" aria-hidden />}
           </button>
 
           {/* Settings Trigger */}
           <button
             onClick={() => setShowSettings(true)}
             className="p-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-100 rounded-xl transition-all border border-zinc-200/40 dark:border-zinc-800 cursor-pointer flex items-center gap-1.5"
-            title="Configure System Architecture"
+            title="Settings"
           >
             <Sliders className="w-4 h-4" />
             <span className="text-[11px] font-mono tracking-wider uppercase hidden sm:inline">Settings</span>
@@ -380,7 +374,7 @@ export default function DashboardView(props: DashboardViewProps) {
           handleStartDubbing={handleStartDubbing}
           handleResetWorkflow={handleResetWorkflow}
         />
-        <ChatView {...chatData} user={user} />
+        <ChatView {...chatData} user={user} onApplyTranscript={handleSaveTranscript} />
         </>
         )}
 
@@ -399,13 +393,12 @@ export default function DashboardView(props: DashboardViewProps) {
       <SettingsView
         showSettings={showSettings}
         setShowSettings={setShowSettings}
-        voiceSettings={voiceSettings}
-        setVoiceSettings={setVoiceSettings}
-        elevenLabsKey={elevenLabsKey}
-        setElevenLabsKey={setElevenLabsKey}
+        defaultVoiceId={defaultVoiceId}
         projects={projects}
         setSelectedProjectId={setSelectedProjectId}
         setAppState={setAppState}
+        themeMode={themeMode}
+        toggleTheme={toggleTheme}
         isRealFirebase={isRealFirebase}
       />
 

@@ -67,7 +67,7 @@ export function CompletionScreen({
       {project ? (
         <TranscriptEditor
           project={project}
-          onSaveTranscript={onSaveTranscript}
+          onSaveTranscript={(segments) => onSaveTranscript(project.id, segments)}
         />
       ) : null}
 

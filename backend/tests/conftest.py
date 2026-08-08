@@ -59,6 +59,13 @@ os.environ.update(
         "GEMINI_BACKOFF_BASE_SECONDS": "0.01",
         "GEMINI_BACKOFF_MAX_SECONDS": "0.05",
         "GEMINI_BACKOFF_JITTER_RATIO": "0",
+        # OpenAI off by default in tests; dedicated OpenAI tests override this.
+        "OPENAI_API_KEY": "",
+        "OPENAI_MODEL": "gpt-4o-mini",
+        "OPENAI_TIMEOUT_SECONDS": "5",
+        "OPENAI_MAX_RETRIES": "0",
+        "OPENAI_MAX_OUTPUT_TOKENS": "2048",
+        "AI_PROVIDER": "auto",
     }
 )
 

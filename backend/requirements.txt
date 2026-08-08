@@ -3,6 +3,7 @@ uvicorn
 python-dotenv
 python-multipart
 google-auth
+openai>=1.60.0
 ffmpeg-python
 faster-whisper
 transformers

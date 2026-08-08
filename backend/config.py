@@ -58,6 +58,20 @@ TRANSLATION_PROVIDER = (
     os.getenv("TRANSLATION_PROVIDER", "auto").strip().lower() or "auto"
 )
 
+# AI provider for chat / analysis / improvement features: auto | openai | gemini
+#   auto    — OpenAI when OPENAI_API_KEY is set, else Gemini when GEMINI_API_KEY is set
+#   openai  — always OpenAI (chat/analysis/improvement)
+#   gemini  — always Gemini (chat/analysis/improvement)
+AI_PROVIDER = (os.getenv("AI_PROVIDER", "auto").strip().lower() or "auto")
+
+# OpenAI (backend-only — never expose to frontend / VITE_*)
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+OPENAI_MODEL = (os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini")
+OPENAI_TIMEOUT_SECONDS = max(5.0, float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")))
+OPENAI_MAX_RETRIES = max(0, int(os.getenv("OPENAI_MAX_RETRIES", "2")))
+# Cap on generated output tokens (cost control). 0 = SDK default.
+OPENAI_MAX_OUTPUT_TOKENS = max(0, int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "2048")))
+
 # Google Gemini (backend-only — never expose to frontend / VITE_*)
 GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
 GEMINI_MODEL = (
@@ -65,6 +79,10 @@ GEMINI_MODEL = (
 )
 GEMINI_CLEANUP_TRANSCRIPT = os.getenv(
     "GEMINI_CLEANUP_TRANSCRIPT", "false"
+).strip().lower() in ("1", "true", "yes", "on")
+# Translation quality check (Gemini) after translation; retries once on serious issues.
+GEMINI_TRANSLATION_QA = os.getenv(
+    "GEMINI_TRANSLATION_QA", "true"
 ).strip().lower() in ("1", "true", "yes", "on")
 GEMINI_TIMEOUT_SECONDS = max(5.0, float(os.getenv("GEMINI_TIMEOUT_SECONDS", "60")))
 GEMINI_MAX_RETRIES = max(0, int(os.getenv("GEMINI_MAX_RETRIES", "3")))

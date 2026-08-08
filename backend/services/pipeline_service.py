@@ -2,7 +2,12 @@ import os
 import shutil
 import tempfile
 
-from config import PERF_PROFILE, TEMP_DIR, GEMINI_CLEANUP_TRANSCRIPT
+from config import (
+    PERF_PROFILE,
+    TEMP_DIR,
+    GEMINI_CLEANUP_TRANSCRIPT,
+    GEMINI_TRANSLATION_QA,
+)
 from services.ffmpeg_service import extract_audio
 from services.whisper_service import transcribe_audio
 from services.translator_service import (
@@ -86,6 +91,53 @@ async def process_video(
             result["language"],
             target_language,
         )
+
+    # Step 4.5 - Optional Gemini translation QA (retries once on serious issues)
+    if GEMINI_TRANSLATION_QA:
+        try:
+            from services import gemini_service
+
+            if gemini_service.is_configured():
+                report("Translation QA", "Checking translation quality")
+                with stage_timer(profile, "translation_qa"):
+                    qa = gemini_service.quality_check_translation(translated_segments)
+                issues = qa.get("issues") or []
+                if qa.get("has_serious_issues"):
+                    logger.warning(
+                        "Gemini translation QA found serious issues; retranslating once",
+                        extra={
+                            "event": "translation_qa_retry",
+                            "issue_count": len(issues),
+                        },
+                    )
+                    report("Translation QA", "Issues found; retranslating once")
+                    with stage_timer(profile, "translation_retry"):
+                        translated_segments = translate_segments(
+                            result["segments"],
+                            result["language"],
+                            target_language,
+                        )
+                        translated_text = translate_text(
+                            result["full_text"],
+                            result["language"],
+                            target_language,
+                        )
+                else:
+                    logger.info(
+                        "Gemini translation QA passed",
+                        extra={
+                            "event": "translation_qa_passed",
+                            "issue_count": len(issues),
+                        },
+                    )
+        except Exception as qa_exc:
+            logger.warning(
+                "Gemini translation QA failed; continuing with current translation",
+                extra={
+                    "event": "translation_qa_failed",
+                    "error_type": type(qa_exc).__name__,
+                },
+            )
 
     # Step 5 - Generate segment audio (controlled concurrency + resume)
     report("TTS", f"Generating speech with ElevenLabs (voice={voice})")

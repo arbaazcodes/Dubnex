@@ -180,11 +180,11 @@ export default function StudioView(props: StudioViewProps) {
                           Drag & drop your video container here, or{' '}
                           <label className="text-emerald-500 hover:text-emerald-400 font-bold cursor-pointer transition-colors hover:underline">
                             browse files
-                            <input 
-                              type="file" 
-                              accept="video/*" 
-                              className="hidden" 
-                              onChange={handleFileChange} 
+                            <input
+                              type="file"
+                              accept="video/*"
+                              className="sr-only"
+                              onChange={handleFileChange}
                             />
                           </label>
                         </p>
@@ -195,12 +195,13 @@ export default function StudioView(props: StudioViewProps) {
 
                       {/* Video Link Input Section */}
                       <div className="bg-zinc-50/50 dark:bg-zinc-950/20 border border-zinc-200/40 dark:border-zinc-850/40 rounded-2xl p-4 space-y-2.5 text-left">
-                        <label className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest font-extrabold flex items-center gap-1.5">
-                          <ExternalLink className="w-3.5 h-3.5 text-emerald-500" />
+                        <label htmlFor="video-url-input" className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest font-extrabold flex items-center gap-1.5">
+                          <ExternalLink className="w-3.5 h-3.5 text-emerald-500" aria-hidden />
                           <span>Import from Video Link / URL</span>
                         </label>
                         <div className="flex gap-2">
                           <input
+                            id="video-url-input"
                             type="url"
                             placeholder="Paste MP4, MOV, or direct video link..."
                             value={videoUrlInput}
@@ -272,9 +273,13 @@ export default function StudioView(props: StudioViewProps) {
                           ) : (
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-bold text-zinc-900 dark:text-white font-mono uppercase bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded border border-emerald-500/20">
-                                {detectedLanguage || 'English'}
+                                {detectedLanguage || 'Unknown'}
                               </span>
-                              <span className="text-[10px] text-emerald-500 font-bold">✓ ({Math.round((detectionConfidence || 0.96) * 100)}% Confidence)</span>
+                              {detectionConfidence != null ? (
+                                <span className="text-[10px] text-emerald-500 font-bold">✓ ({Math.round(detectionConfidence * 100)}% Confidence)</span>
+                              ) : (
+                                <span className="text-[10px] text-zinc-400 font-mono">Could not auto-detect</span>
+                              )}
                             </div>
                           )}
                         </div>
@@ -287,9 +292,10 @@ export default function StudioView(props: StudioViewProps) {
 
                       {/* Target selection */}
                       <div className="space-y-2">
-                        <label className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block font-bold">Target Translation Language</label>
+                        <label htmlFor="target-language-select" className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block font-bold">Target Translation Language</label>
                         <div className="relative">
                           <select
+                            id="target-language-select"
                             value={targetLanguageInput}
                             onChange={(e) => setTargetLanguageInput(e.target.value)}
                             className="w-full appearance-none bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 rounded-xl px-4 py-3.5 text-xs text-zinc-800 dark:text-zinc-200 font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"

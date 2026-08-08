@@ -1,4 +1,5 @@
 // ChatView - AI Studio Intelligence Suite (chatbot / intelligence / live) right column.
+import { toast } from 'sonner';
 import {
   MessageSquare,
   Brain,
@@ -7,13 +8,27 @@ import {
   Bot,
   Mic,
   MicOff,
+  Sparkles,
+  ClipboardCopy,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
 import type { FormEvent } from 'react';
 import type { RefObject } from 'react';
 import type { AuthUser } from '../../lib/firebase';
+import type { TranscriptSegment } from '../../types';
+import type {
+  TranscriptAnalysisResult,
+  ImprovedTranscriptResult,
+  ImprovedTranslationResult,
+} from '../../hooks/useChat';
 
 interface ChatViewProps {
   user: AuthUser | null;
+  /** Save transcript segments back to the active project (used by AI apply actions). */
+  onApplyTranscript: (next: TranscriptSegment[]) => void;
   aiSuiteTab: 'chatbot' | 'intelligence' | 'live';
   setAiSuiteTab: (tab: 'chatbot' | 'intelligence' | 'live') => void;
   chatMessages: { role: 'user' | 'assistant'; content: string; timestamp: string }[];
@@ -23,8 +38,6 @@ interface ChatViewProps {
   setChatRole: (role: 'director' | 'language' | 'coach') => void;
   chatModel: 'gemini-3.1-pro-preview' | 'gemini-3.5-flash' | 'gemini-3.1-flash-lite';
   setChatModel: (model: 'gemini-3.1-pro-preview' | 'gemini-3.5-flash' | 'gemini-3.1-flash-lite') => void;
-  chatThinking: boolean;
-  setChatThinking: (thinking: boolean) => void;
   chatLoading: boolean;
   handleSendChatMessage: (event: FormEvent) => void;
   chatEndRef: RefObject<HTMLDivElement | null>;
@@ -32,9 +45,21 @@ interface ChatViewProps {
   analystQuery: string;
   setAnalystQuery: (query: string) => void;
   analysisLoading: boolean;
-  analysisThinking: boolean;
-  setAnalysisThinking: (thinking: boolean) => void;
   runVideoAnalysis: () => void;
+  transcriptAnalysis: TranscriptAnalysisResult | null;
+  transcriptAnalysisLoading: boolean;
+  transcriptAnalysisError: string | null;
+  runTranscriptAnalysis: () => void;
+  improvedTranscript: ImprovedTranscriptResult | null;
+  improveTranscriptLoading: boolean;
+  improveTranscriptError: string | null;
+  runImproveTranscript: () => void;
+  improvedTranslation: ImprovedTranslationResult | null;
+  improveTranslationLoading: boolean;
+  improveTranslationError: string | null;
+  runImproveTranslation: () => void;
+  buildAppliedTranscript: () => TranscriptSegment[] | null;
+  buildAppliedTranslation: () => TranscriptSegment[] | null;
   recording: boolean;
   recordingDuration: number;
   audioBlob: Blob | null;
@@ -61,8 +86,6 @@ export default function ChatView(props: ChatViewProps) {
     setChatRole,
     chatModel,
     setChatModel,
-    chatThinking,
-    setChatThinking,
     chatLoading,
     handleSendChatMessage,
     chatEndRef,
@@ -70,9 +93,22 @@ export default function ChatView(props: ChatViewProps) {
     analystQuery,
     setAnalystQuery,
     analysisLoading,
-    analysisThinking,
-    setAnalysisThinking,
     runVideoAnalysis,
+    transcriptAnalysis,
+    transcriptAnalysisLoading,
+    transcriptAnalysisError,
+    runTranscriptAnalysis,
+    improvedTranscript,
+    improveTranscriptLoading,
+    improveTranscriptError,
+    runImproveTranscript,
+    improvedTranslation,
+    improveTranslationLoading,
+    improveTranslationError,
+    runImproveTranslation,
+    buildAppliedTranscript,
+    buildAppliedTranslation,
+    onApplyTranscript,
     recording,
     recordingDuration,
     audioBlob,
@@ -86,6 +122,35 @@ export default function ChatView(props: ChatViewProps) {
     liveStatusText,
     toggleLiveVoiceSession,
   } = props;
+
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('Copied to clipboard');
+    } catch {
+      toast.error('Could not copy text');
+    }
+  };
+
+  const applyImprovedTranscript = () => {
+    const next = buildAppliedTranscript();
+    if (!next) {
+      toast.error('Could not map improved text back to segments. Use Copy instead.');
+      return;
+    }
+    onApplyTranscript(next);
+    toast.success('Improved transcript applied to project.');
+  };
+
+  const applyImprovedTranslation = () => {
+    const next = buildAppliedTranslation();
+    if (!next) {
+      toast.error('No improvements to apply.');
+      return;
+    }
+    onApplyTranscript(next);
+    toast.success('Improved translations applied to project.');
+  };
 
   return (
         <section className="lg:col-span-5 xl:col-span-4 flex flex-col">
@@ -165,21 +230,6 @@ export default function ChatView(props: ChatViewProps) {
                       </select>
                     </div>
 
-                    {/* Enable Thinking for 3.1 Pro */}
-                    {chatModel === 'gemini-3.1-pro-preview' && (
-                      <div className="col-span-2 pt-1.5 flex items-center gap-1.5 border-t border-zinc-200/40 dark:border-zinc-800/60 mt-1">
-                        <input
-                          type="checkbox"
-                          id="chatThinking"
-                          checked={chatThinking}
-                          onChange={(e) => setChatThinking(e.target.checked)}
-                          className="accent-emerald-500 w-3 h-3 cursor-pointer"
-                        />
-                        <label htmlFor="chatThinking" className="text-[9px] font-mono text-emerald-500 font-bold uppercase tracking-wider cursor-pointer">
-                          Enable High Thinking Mode
-                        </label>
-                      </div>
-                    )}
                   </div>
 
                   {/* Message Thread panel */}
@@ -215,14 +265,16 @@ export default function ChatView(props: ChatViewProps) {
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                       placeholder="Ask the dubbing coach anything..."
+                      aria-label="Message the dubbing coach"
                       className="flex-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 rounded-xl px-3 py-2.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500 font-sans"
                     />
                     <button
                       type="submit"
                       disabled={chatLoading}
+                      aria-label="Send message"
                       className="px-3.5 bg-emerald-500 text-zinc-950 rounded-xl hover:bg-emerald-400 flex items-center justify-center cursor-pointer transition-colors"
                     >
-                      <Send className="w-3.5 h-3.5 font-bold" />
+                      <Send className="w-3.5 h-3.5 font-bold" aria-hidden />
                     </button>
                   </form>
                 </div>
@@ -236,11 +288,11 @@ export default function ChatView(props: ChatViewProps) {
                   <div className="space-y-3 bg-zinc-50 dark:bg-zinc-950/60 p-4 rounded-2xl border border-zinc-200/30 dark:border-zinc-900 flex flex-col text-left">
                     <div className="flex items-center gap-2 select-none">
                       <Brain className="w-4 h-4 text-emerald-500" />
-                      <span className="text-[10px] font-mono uppercase tracking-widest font-extrabold text-zinc-900 dark:text-white">Video Intelligence (Pro 3.1)</span>
+                      <span className="text-[10px] font-mono uppercase tracking-widest font-extrabold text-zinc-900 dark:text-white">Video Analysis</span>
                     </div>
-                    
+
                     <p className="text-[10px] text-zinc-400 leading-normal">
-                      Runs Gemini Pro 3.1 video understanding pipeline on the current video's transcript, timeline milestones, and vocal configurations.
+                      Sends the current video's title, duration, and transcript to the backend analysis endpoint and displays the returned report.
                     </p>
 
                     <div className="space-y-2 select-none">
@@ -249,23 +301,11 @@ export default function ChatView(props: ChatViewProps) {
                         value={analystQuery}
                         onChange={(e) => setAnalystQuery(e.target.value)}
                         placeholder="e.g. Find timeline errors, recommend vocal tuning..."
+                        aria-label="Video analysis query"
                         className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 text-[10.5px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
                       />
                       
-                      <div className="flex items-center justify-between gap-2 pt-1">
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            id="analysisThinking"
-                            checked={analysisThinking}
-                            onChange={(e) => setAnalysisThinking(e.target.checked)}
-                            className="accent-emerald-500 w-3.5 h-3.5 cursor-pointer"
-                          />
-                          <label htmlFor="analysisThinking" className="text-[9px] font-mono text-zinc-400 cursor-pointer uppercase select-none">
-                            High Thinking Level
-                          </label>
-                        </div>
-
+                      <div className="flex items-center justify-end gap-2 pt-1">
                         <button
                           onClick={runVideoAnalysis}
                           disabled={analysisLoading}
@@ -281,6 +321,204 @@ export default function ChatView(props: ChatViewProps) {
                       <div className="mt-3 bg-white dark:bg-zinc-950 p-3.5 rounded-xl border border-zinc-200/40 dark:border-zinc-850 text-[11px] leading-relaxed text-zinc-300 max-h-[160px] overflow-y-auto">
                         <div className="prose dark:prose-invert prose-xs text-zinc-800 dark:text-zinc-300">
                           <p className="whitespace-pre-wrap font-sans">{videoAnalysis}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* TRANSCRIPT INTELLIGENCE UNIT */}
+                  <div className="space-y-3 bg-zinc-50 dark:bg-zinc-950/60 p-4 rounded-2xl border border-zinc-200/30 dark:border-zinc-900 text-left flex flex-col">
+                    <div className="flex items-center gap-2 select-none">
+                      <Sparkles className="w-4 h-4 text-emerald-500" />
+                      <span className="text-[10px] font-mono uppercase tracking-widest font-extrabold text-zinc-900 dark:text-white">Transcript Intelligence</span>
+                    </div>
+
+                    <p className="text-[10px] text-zinc-400 leading-normal select-none">
+                      AI analysis, script polish, and translation refinement for the active project&apos;s transcript. Improvements are shown before applying.
+                    </p>
+
+                    <div className="flex flex-wrap items-center gap-2 select-none">
+                      <button
+                        onClick={runTranscriptAnalysis}
+                        disabled={transcriptAnalysisLoading || improveTranscriptLoading || improveTranslationLoading}
+                        className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-emerald-500 rounded-xl text-[10px] font-bold font-mono transition-colors border border-emerald-500/10 cursor-pointer disabled:opacity-40"
+                      >
+                        {transcriptAnalysisLoading ? 'Analyzing...' : 'Analyze Script'}
+                      </button>
+                      <button
+                        onClick={runImproveTranscript}
+                        disabled={transcriptAnalysisLoading || improveTranscriptLoading || improveTranslationLoading}
+                        className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-emerald-500 rounded-xl text-[10px] font-bold font-mono transition-colors border border-emerald-500/10 cursor-pointer disabled:opacity-40"
+                      >
+                        {improveTranscriptLoading ? 'Polishing...' : 'Improve Script'}
+                      </button>
+                      <button
+                        onClick={runImproveTranslation}
+                        disabled={transcriptAnalysisLoading || improveTranscriptLoading || improveTranslationLoading}
+                        className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-emerald-500 rounded-xl text-[10px] font-bold font-mono transition-colors border border-emerald-500/10 cursor-pointer disabled:opacity-40"
+                      >
+                        {improveTranslationLoading ? 'Refining...' : 'Refine Translation'}
+                      </button>
+                    </div>
+
+                    {/* Analysis result */}
+                    {transcriptAnalysisError && (
+                      <div className="flex items-center justify-between gap-2 bg-rose-500/10 border border-rose-500/25 rounded-xl px-3 py-2 text-[10px] text-rose-500">
+                        <span className="flex items-center gap-1.5">
+                          <AlertTriangle className="w-3 h-3 shrink-0" />
+                          {transcriptAnalysisError}
+                        </span>
+                        <button
+                          onClick={runTranscriptAnalysis}
+                          className="flex items-center gap-1 font-bold font-mono uppercase tracking-wider hover:underline cursor-pointer shrink-0"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Retry
+                        </button>
+                      </div>
+                    )}
+                    {transcriptAnalysis && !transcriptAnalysisLoading && (
+                      <div className="mt-1 bg-white dark:bg-zinc-950 p-3.5 rounded-xl border border-zinc-200/40 dark:border-zinc-850 text-[10.5px] leading-relaxed text-zinc-800 dark:text-zinc-300 space-y-2 max-h-[220px] overflow-y-auto">
+                        <p className="text-[8px] font-mono text-emerald-500 uppercase tracking-wider font-bold flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> Analysis Complete{transcriptAnalysis.provider ? ` · ${transcriptAnalysis.provider}` : ''}
+                        </p>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                          {transcriptAnalysis.topic && (
+                            <p><span className="text-zinc-400 font-mono uppercase text-[8px] font-bold block">Topic</span>{transcriptAnalysis.topic}</p>
+                          )}
+                          {transcriptAnalysis.tone && (
+                            <p><span className="text-zinc-400 font-mono uppercase text-[8px] font-bold block">Tone</span>{transcriptAnalysis.tone}</p>
+                          )}
+                          {transcriptAnalysis.speaking_style && (
+                            <p><span className="text-zinc-400 font-mono uppercase text-[8px] font-bold block">Speaking Style</span>{transcriptAnalysis.speaking_style}</p>
+                          )}
+                          {transcriptAnalysis.audience && (
+                            <p><span className="text-zinc-400 font-mono uppercase text-[8px] font-bold block">Audience</span>{transcriptAnalysis.audience}</p>
+                          )}
+                          {transcriptAnalysis.quality && (
+                            <p><span className="text-zinc-400 font-mono uppercase text-[8px] font-bold block">Quality</span>{transcriptAnalysis.quality}</p>
+                          )}
+                        </div>
+                        {!!transcriptAnalysis.key_points?.length && (
+                          <div>
+                            <p className="text-zinc-400 font-mono uppercase text-[8px] font-bold">Key Points</p>
+                            <ul className="list-disc pl-4 space-y-0.5">
+                              {transcriptAnalysis.key_points.map((k, i) => (
+                                <li key={i}>{k}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {!!transcriptAnalysis.unclear_sections?.length && (
+                          <div>
+                            <p className="text-zinc-400 font-mono uppercase text-[8px] font-bold">Unclear Sections</p>
+                            <ul className="list-disc pl-4 space-y-0.5">
+                              {transcriptAnalysis.unclear_sections.map((u, i) => (
+                                <li key={i}>{u}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {!!transcriptAnalysis.translation_risks?.length && (
+                          <div>
+                            <p className="text-zinc-400 font-mono uppercase text-[8px] font-bold">Translation Risks</p>
+                            <ul className="list-disc pl-4 space-y-0.5">
+                              {transcriptAnalysis.translation_risks.map((r, i) => (
+                                <li key={i}>{r}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Improve transcript result */}
+                    {improveTranscriptError && (
+                      <div className="flex items-center justify-between gap-2 bg-rose-500/10 border border-rose-500/25 rounded-xl px-3 py-2 text-[10px] text-rose-500">
+                        <span className="flex items-center gap-1.5">
+                          <AlertTriangle className="w-3 h-3 shrink-0" />
+                          {improveTranscriptError}
+                        </span>
+                        <button
+                          onClick={runImproveTranscript}
+                          className="flex items-center gap-1 font-bold font-mono uppercase tracking-wider hover:underline cursor-pointer shrink-0"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Retry
+                        </button>
+                      </div>
+                    )}
+                    {improvedTranscript && !improveTranscriptLoading && (
+                      <div className="mt-1 bg-white dark:bg-zinc-950 p-3.5 rounded-xl border border-zinc-200/40 dark:border-zinc-850 text-[10.5px] leading-relaxed text-zinc-800 dark:text-zinc-300 space-y-2 max-h-[220px] overflow-y-auto">
+                        <p className="text-[8px] font-mono text-emerald-500 uppercase tracking-wider font-bold flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> Improved Script{improvedTranscript.provider ? ` · ${improvedTranscript.provider}` : ''}
+                        </p>
+                        {improvedTranscript.changes && (
+                          <p className="text-[9px] text-zinc-400 italic">{improvedTranscript.changes}</p>
+                        )}
+                        <p className="whitespace-pre-wrap">{improvedTranscript.improved_text}</p>
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            onClick={applyImprovedTranscript}
+                            className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-xl text-[10px] font-bold font-mono uppercase tracking-wide cursor-pointer flex items-center gap-1"
+                          >
+                            <CheckCircle2 className="w-3 h-3" /> Apply
+                          </button>
+                          <button
+                            onClick={() => copyText(improvedTranscript.improved_text)}
+                            className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-[10px] font-bold font-mono uppercase tracking-wide cursor-pointer flex items-center gap-1"
+                          >
+                            <ClipboardCopy className="w-3 h-3" /> Copy
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Improve translation result */}
+                    {improveTranslationError && (
+                      <div className="flex items-center justify-between gap-2 bg-rose-500/10 border border-rose-500/25 rounded-xl px-3 py-2 text-[10px] text-rose-500">
+                        <span className="flex items-center gap-1.5">
+                          <AlertTriangle className="w-3 h-3 shrink-0" />
+                          {improveTranslationError}
+                        </span>
+                        <button
+                          onClick={runImproveTranslation}
+                          className="flex items-center gap-1 font-bold font-mono uppercase tracking-wider hover:underline cursor-pointer shrink-0"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Retry
+                        </button>
+                      </div>
+                    )}
+                    {improvedTranslation && !improveTranslationLoading && (
+                      <div className="mt-1 bg-white dark:bg-zinc-950 p-3.5 rounded-xl border border-zinc-200/40 dark:border-zinc-850 text-[10.5px] leading-relaxed text-zinc-800 dark:text-zinc-300 space-y-2 max-h-[220px] overflow-y-auto">
+                        <p className="text-[8px] font-mono text-emerald-500 uppercase tracking-wider font-bold flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> Refined Translations{improvedTranslation.provider ? ` · ${improvedTranslation.provider}` : ''}
+                        </p>
+                        {improvedTranslation.summary && (
+                          <p className="text-[9px] text-zinc-400 italic">{improvedTranslation.summary}</p>
+                        )}
+                        <div className="space-y-2">
+                          {improvedTranslation.segments.map((seg) => (
+                            <div key={seg.id} className="rounded-lg border border-zinc-200/50 dark:border-zinc-800 p-2 space-y-1">
+                              <p className="text-[9px] text-zinc-400 truncate"><span className="font-bold uppercase text-[8px]">Original:</span> {seg.original}</p>
+                              <p className="text-[9px] text-emerald-600 dark:text-emerald-400"><span className="font-bold uppercase text-[8px]">Improved:</span> {seg.improved_translation}</p>
+                              {seg.note && <p className="text-[8px] text-zinc-400 italic">Note: {seg.note}</p>}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            onClick={applyImprovedTranslation}
+                            className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-xl text-[10px] font-bold font-mono uppercase tracking-wide cursor-pointer flex items-center gap-1"
+                          >
+                            <CheckCircle2 className="w-3 h-3" /> Apply All
+                          </button>
+                          <button
+                            onClick={() => copyText(
+                              improvedTranslation.segments.map((s) => s.improved_translation).join('\n')
+                            )}
+                            className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-[10px] font-bold font-mono uppercase tracking-wide cursor-pointer flex items-center gap-1"
+                          >
+                            <ClipboardCopy className="w-3 h-3" /> Copy All
+                          </button>
                         </div>
                       </div>
                     )}
@@ -302,7 +540,7 @@ export default function ChatView(props: ChatViewProps) {
                     </div>
 
                     <p className="text-[10px] text-zinc-400 leading-normal select-none">
-                      Record voiceover/dubbing notes via browser mic. App converts raw speech to timeline blocks with Gemini 3.5 Flash.
+                      Record voiceover/dubbing notes via browser mic, then send the audio to the backend for transcription.
                     </p>
 
                     <div className="flex items-center gap-2 select-none">
@@ -338,12 +576,16 @@ export default function ChatView(props: ChatViewProps) {
                     {/* Transcribed display area */}
                     {transcribedText && (
                       <div className="mt-2 bg-white dark:bg-zinc-950 p-3 rounded-xl border border-zinc-200/40 dark:border-zinc-850 text-[11px] leading-relaxed text-zinc-800 dark:text-zinc-300 relative flex flex-col gap-2">
-                        <span className="text-[8px] font-mono text-emerald-500 uppercase tracking-wider block font-bold">Transcription Output (3.5 Flash)</span>
+                        <span className="text-[8px] font-mono text-emerald-500 uppercase tracking-wider block font-bold">Transcription Output</span>
                         <p className="italic">"{transcribedText}"</p>
                         <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(transcribedText);
-                            alert("Copied to clipboard!");
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(transcribedText);
+                              toast.success('Copied to clipboard');
+                            } catch {
+                              toast.error('Could not copy text');
+                            }
                           }}
                           className="self-end text-[9px] font-mono text-emerald-500 uppercase font-bold hover:underline cursor-pointer pt-1"
                         >
@@ -375,7 +617,7 @@ export default function ChatView(props: ChatViewProps) {
 
                   <div className="space-y-1.5 select-none">
                     <h3 className="text-xs font-mono font-bold text-zinc-900 dark:text-white uppercase tracking-widest">
-                      Gemini Live Voice Companion
+                      Live Voice Companion
                     </h3>
                     <p className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest">
                       Status: <span className={liveVoiceActive ? "text-emerald-500 font-bold" : "text-zinc-500"}>{liveStatusText}</span>
@@ -383,7 +625,7 @@ export default function ChatView(props: ChatViewProps) {
                   </div>
 
                   <p className="text-[11px] text-zinc-400 leading-relaxed max-w-xs">
-                    Engage in instantaneous, low-latency vocal brainstorming. Refine translation timbres, discuss XTTS presets, or perfect localisations verbally.
+                    Stream your voice to the backend voice session and read live replies. Use it for spoken notes and verbal brainstorming.
                   </p>
 
                   <div className="w-full">

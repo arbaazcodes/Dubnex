@@ -440,6 +440,158 @@ def chat(
     )
 
 
+def quality_check_translation(segments: list[dict]) -> dict[str, Any]:
+    """
+    Review translated segments for serious quality problems.
+
+    Returns {"has_serious_issues": bool, "issues": [{"id", "type", "detail"}]}.
+    Never raises on a normal translation; raises GeminiError on API failure.
+    """
+    if not segments:
+        return {"has_serious_issues": False, "issues": []}
+    data = generate_json(
+        user_prompt=prompts.translation_qa_prompt(segments),
+        system_instruction=prompts.TRANSLATION_QA_SYSTEM,
+        temperature=0.0,
+    )
+    issues = [
+        i
+        for i in (data.get("issues") or [])
+        if isinstance(i, dict)
+    ]
+    return {
+        "has_serious_issues": bool(data.get("has_serious_issues")),
+        "issues": issues,
+    }
+
+
+def analyze_video(
+    *,
+    title: str,
+    duration: str,
+    transcript: str,
+    query: str | None,
+) -> dict[str, Any]:
+    """
+    Produce a real video/transcript analysis, summary, title, and description.
+
+    Returns {"analysis", "summary", "title", "description"} with plain strings.
+    Raises GeminiError on API failure; the endpoint maps it to a friendly HTTP code.
+    """
+    data = generate_json(
+        user_prompt=prompts.video_analysis_prompt(title, duration, transcript, query),
+        system_instruction=prompts.VIDEO_ANALYSIS_SYSTEM,
+        temperature=0.3,
+    )
+    return {
+        "analysis": str(data.get("analysis") or "").strip(),
+        "summary": str(data.get("summary") or "").strip(),
+        "title": str(data.get("title") or "").strip(),
+        "description": str(data.get("description") or "").strip(),
+    }
+
+
+def recommend_voice(
+    *,
+    transcript: str,
+    target_language: str | None,
+    voices: list[dict],
+) -> dict[str, Any]:
+    """
+    Recommend a voice for dubbing a transcript from a real catalog.
+
+    voices must contain dicts with apiVoiceKey (the only accepted ids).
+    The returned id is validated against the catalog: a non-catalog id is
+    replaced with None rather than trusted.
+    """
+    valid_ids = {
+        str(v.get("apiVoiceKey")) for v in voices if v.get("apiVoiceKey")
+    }
+    data = generate_json(
+        user_prompt=prompts.voice_recommendation_prompt(
+            transcript, target_language, voices
+        ),
+        system_instruction=prompts.VOICE_RECOMMENDATION_SYSTEM,
+        temperature=0.2,
+    )
+    picked = str(data.get("recommended_voice_id") or "").strip()
+    if picked not in valid_ids:
+        # Never invent a voice id — Gemini may hallucinate; we do not trust it.
+        picked = ""
+    return {
+        "recommended_voice_id": picked or None,
+        "reason": str(data.get("reason") or "").strip(),
+        "confidence": data.get("confidence"),
+    }
+
+
+def analyze_transcript(transcript: str) -> dict[str, Any]:
+    """Structured transcript analysis (mirrors openai_service.analyze_transcript)."""
+    data = generate_json(
+        user_prompt=prompts.transcript_analysis_prompt(transcript),
+        system_instruction=prompts.TRANSCRIPT_ANALYSIS_SYSTEM,
+        temperature=0.2,
+    )
+    fields = [
+        "topic",
+        "tone",
+        "speaking_style",
+        "audience",
+        "key_points",
+        "unclear_sections",
+        "quality",
+        "translation_risks",
+    ]
+    return {f: data.get(f) for f in fields}
+
+
+def improve_transcript(text: str) -> dict[str, Any]:
+    """Improved transcript (mirrors openai_service.improve_transcript)."""
+    data = generate_json(
+        user_prompt=prompts.transcript_improvement_prompt(text),
+        system_instruction=prompts.TRANSCRIPT_IMPROVEMENT_SYSTEM,
+        temperature=0.1,
+    )
+    improved = str(data.get("improved_text") or "").strip()
+    if not improved:
+        raise GeminiError("Gemini returned an empty improved transcript.", retryable=True)
+    return {"improved_text": improved, "changes": ""}
+
+
+def improve_translation(segments: list[dict]) -> dict[str, Any]:
+    """Improved translations per segment (mirrors openai_service.improve_translation)."""
+    if not segments:
+        return {"segments": [], "summary": "No segments provided."}
+    data = generate_json(
+        user_prompt=prompts.translation_improvement_prompt(segments),
+        system_instruction=prompts.TRANSLATION_IMPROVEMENT_SYSTEM,
+        temperature=0.1,
+    )
+    items = data.get("segments") or []
+    by_id: dict[Any, dict] = {
+        item.get("id"): item for item in items if isinstance(item, dict)
+    }
+    out: list[dict] = []
+    for seg in segments:
+        sid = seg.get("id")
+        improved = by_id.get(sid)
+        candidate = ""
+        note = ""
+        if isinstance(improved, dict):
+            candidate = str(improved.get("improved_translation") or "").strip()
+            note = str(improved.get("note") or "").strip()
+        out.append(
+            {
+                "id": sid,
+                "original": seg.get("original") or "",
+                "translated": seg.get("translated") or "",
+                "improved_translation": candidate or (seg.get("translated") or ""),
+                "note": note or ("Unchanged." if not candidate else ""),
+            }
+        )
+    return {"segments": out, "summary": f"Reviewed {len(out)} segment(s)."}
+
+
 def health_detail() -> dict[str, Any]:
     """Non-secret status for /ready and startup logs."""
     configured = is_configured()

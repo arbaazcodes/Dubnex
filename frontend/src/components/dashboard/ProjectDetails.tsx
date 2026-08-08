@@ -270,6 +270,45 @@ export default function ProjectDetails({
             <MetaRow label="Processing Time" value={processingTime} />
           </div>
 
+          {project.status !== 'Completed' && project.status !== 'Failed' && (
+            <div className="rounded-2xl border border-zinc-200/60 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/40 px-4 py-4 space-y-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-400 font-bold">
+                  Processing progress
+                </span>
+                <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 font-bold tabular-nums">
+                  {Math.round(project.progress ?? 0)}%
+                </span>
+              </div>
+              <div className="h-2 rounded-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-sky-500 transition-all duration-500"
+                  style={{ width: `${Math.max(0, Math.min(100, project.progress ?? 0))}%` }}
+                />
+              </div>
+              {Array.isArray(project.steps) && project.steps.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {project.steps.map((s) => (
+                    <span
+                      key={s.name}
+                      className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase border ${
+                        s.status === 'completed'
+                          ? 'text-emerald-600 dark:text-emerald-400 border-emerald-500/25 bg-emerald-500/5'
+                          : s.status === 'processing'
+                            ? 'text-sky-600 dark:text-sky-400 border-sky-500/25 bg-sky-500/5'
+                            : s.status === 'failed'
+                              ? 'text-rose-600 dark:text-rose-400 border-rose-500/25 bg-rose-500/5'
+                              : 'text-zinc-400 border-zinc-200 dark:border-zinc-800'
+                      }`}
+                    >
+                      {s.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {project.status === 'Failed' && (project.failureReason || project.errorDetails) && (
             <div className="flex items-start gap-2 text-xs text-rose-500 bg-rose-500/5 border border-rose-500/15 rounded-2xl px-4 py-3">
               <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />

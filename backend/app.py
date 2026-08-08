@@ -338,10 +338,19 @@ async def chat_api(request: Request, payload: dict = Body(...)):
     if len(message) > MAX_CHAT_MESSAGE_LENGTH:
         return JSONResponse(status_code=400, content={"error": "Message is too long."})
 
-    from services import gemini_service
-    from services.gemini_service import GeminiError
+    from services.ai_provider import resolve_ai_provider
+    from services.openai_service import OpenAIError, is_configured as openai_configured
+    from services.gemini_service import GeminiError, is_configured as gemini_configured
 
-    if not gemini_service.is_configured():
+    provider = resolve_ai_provider()
+    if provider == "openai" and not openai_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "OpenAI is not configured. Set OPENAI_API_KEY on the backend.",
+            },
+        )
+    if provider == "gemini" and not gemini_configured():
         return JSONResponse(
             status_code=503,
             content={
@@ -372,16 +381,31 @@ async def chat_api(request: Request, payload: dict = Body(...)):
         return JSONResponse(status_code=400, content={"error": "role must be a string."})
 
     try:
-        text = await asyncio.to_thread(
-            gemini_service.chat,
-            message,
-            history=history if isinstance(history, list) else [],
-            system_instruction=system_instruction,
-            role=role,
-            model_name=model_name,
-        )
-        return {"text": text, "provider": "gemini"}
-    except GeminiError as exc:
+        if provider == "openai":
+            from services import openai_service
+
+            text = await asyncio.to_thread(
+                openai_service.chat,
+                message,
+                history=history if isinstance(history, list) else [],
+                system_instruction=system_instruction,
+                role=role,
+                model_name=model_name,
+            )
+            return {"text": text, "provider": "openai"}
+        else:
+            from services import gemini_service
+
+            text = await asyncio.to_thread(
+                gemini_service.chat,
+                message,
+                history=history if isinstance(history, list) else [],
+                system_instruction=system_instruction,
+                role=role,
+                model_name=model_name,
+            )
+            return {"text": text, "provider": "gemini"}
+    except (GeminiError, OpenAIError) as exc:
         code = exc.status_code or 502
         # Map to friendly HTTP without leaking secrets
         if code in (401, 403):
@@ -451,11 +475,438 @@ async def translate_api(request: Request, payload: dict = Body(...)):
 async def analyze_video_api(request: Request, payload: dict = Body(...)):
     user = require_authenticated_user(request)
     enforce_rate_limit(request, user)
+    from services.ai_provider import resolve_ai_provider
+    from services.openai_service import OpenAIError, is_configured as openai_configured
+    from services.gemini_service import GeminiError, is_configured as gemini_configured
+
+    provider = resolve_ai_provider()
+    if provider == "openai" and not openai_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "OpenAI is not configured. Set OPENAI_API_KEY on the backend.",
+            },
+        )
+    if provider == "gemini" and not gemini_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Gemini is not configured. Set GEMINI_API_KEY on the backend.",
+            },
+        )
+
     title = _clean_text((payload or {}).get("title", "Active Video"), 200)
     duration = _clean_text((payload or {}).get("duration", "00:30"), 32)
-    return {
-        "analysis": f"### Analysis\n- Title: {title}\n- Duration: {duration}\n- Source: FastAPI backend"
-    }
+    transcript = payload.get("transcript")
+    if isinstance(transcript, list):
+        # Frontend sends TranscriptSegment[] (each has .text); join into text.
+        parts = []
+        for seg in transcript:
+            if isinstance(seg, dict) and isinstance(seg.get("text"), str):
+                parts.append(seg["text"].strip())
+        transcript = "\n".join(p for p in parts if p)
+    elif not isinstance(transcript, str):
+        transcript = ""
+    transcript = _clean_text(transcript, MAX_TEXT_LENGTH)
+    query = (payload or {}).get("query")
+    if query is not None and not isinstance(query, str):
+        return JSONResponse(
+            status_code=400, content={"error": "query must be a string."}
+        )
+    query = _clean_text(query, 2000) if query else None
+
+    try:
+        if provider == "openai":
+            from services import openai_service
+
+            result = await asyncio.to_thread(
+                openai_service.analyze_video,
+                title=title,
+                duration=duration,
+                transcript=transcript,
+                query=query,
+            )
+        else:
+            from services import gemini_service
+
+            result = await asyncio.to_thread(
+                gemini_service.analyze_video,
+                title=title,
+                duration=duration,
+                transcript=transcript,
+                query=query,
+            )
+        if not result.get("analysis"):
+            return JSONResponse(
+                status_code=502,
+                content={"error": "AI returned an empty analysis."},
+            )
+        result["provider"] = provider
+        return result
+    except (GeminiError, OpenAIError) as exc:
+        code = exc.status_code or 502
+        if code in (401, 403):
+            status = 502
+        elif code == 429:
+            status = 429
+        elif code == 503:
+            status = 503
+        elif code == 504:
+            status = 504
+        else:
+            status = 502 if exc.retryable else 400
+        return JSONResponse(status_code=status, content={"error": str(exc)})
+    except Exception as exc:
+        get_logger("screen_ai.analyze").error(
+            "analyze-video failed",
+            extra={"event": "analyze_error", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Video analysis failed unexpectedly."},
+        )
+
+
+@app.post("/api/recommend-voice")
+async def recommend_voice_api(request: Request, payload: dict = Body(...)):
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
+    from services.ai_provider import resolve_ai_provider
+    from services.openai_service import OpenAIError, is_configured as openai_configured
+    from services.gemini_service import GeminiError, is_configured as gemini_configured
+
+    provider = resolve_ai_provider()
+    transcript = payload.get("transcript")
+    if not isinstance(transcript, str) or not transcript.strip():
+        return JSONResponse(
+            status_code=400, content={"error": "Transcript is required."}
+        )
+    transcript = _clean_text(transcript, MAX_TEXT_LENGTH)
+    target_language = (payload or {}).get("target_language")
+    if target_language is not None and not isinstance(target_language, str):
+        return JSONResponse(
+            status_code=400, content={"error": "target_language must be a string."}
+        )
+    target_language = _clean_text(target_language, 32) if target_language else None
+
+    if provider == "openai" and not openai_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "OpenAI is not configured. Set OPENAI_API_KEY on the backend.",
+            },
+        )
+    if provider == "gemini" and not gemini_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Gemini is not configured. Set GEMINI_API_KEY on the backend.",
+            },
+        )
+
+    from services.voice_catalog import get_voice_catalog
+
+    voices = get_voice_catalog()
+    try:
+        if provider == "openai":
+            from services import openai_service
+
+            result = await asyncio.to_thread(
+                openai_service.recommend_voice,
+                transcript=transcript,
+                target_language=target_language,
+                voices=voices,
+            )
+        else:
+            from services import gemini_service
+
+            result = await asyncio.to_thread(
+                gemini_service.recommend_voice,
+                transcript=transcript,
+                target_language=target_language,
+                voices=voices,
+            )
+        return {
+            "recommended_voice_id": result.get("recommended_voice_id"),
+            "reason": result.get("reason"),
+            "confidence": result.get("confidence"),
+            "available_voice_ids": [v["apiVoiceKey"] for v in voices],
+            "provider": provider,
+        }
+    except (GeminiError, OpenAIError) as exc:
+        code = exc.status_code or 502
+        if code in (401, 403):
+            status = 502
+        elif code == 429:
+            status = 429
+        elif code == 503:
+            status = 503
+        elif code == 504:
+            status = 504
+        else:
+            status = 502 if exc.retryable else 400
+        return JSONResponse(status_code=status, content={"error": str(exc)})
+    except Exception as exc:
+        get_logger("screen_ai.voice_recommend").error(
+            "recommend-voice failed",
+            extra={"event": "recommend_voice_error", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Voice recommendation failed unexpectedly."},
+        )
+
+
+def _normalize_transcript_input(value) -> str:
+    """Accept a transcript string or an array of {text} segments -> text."""
+    if isinstance(value, list):
+        parts = []
+        for seg in value:
+            if isinstance(seg, dict) and isinstance(seg.get("text"), str):
+                parts.append(seg["text"].strip())
+        return "\n".join(p for p in parts if p)
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+@app.post("/api/analyze-transcript")
+async def analyze_transcript_api(request: Request, payload: dict = Body(...)):
+    """Structured transcript analysis (topic, tone, style, audience, points,
+    unclear sections, quality, translation risks). OpenAI preferred, Gemini fallback."""
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
+    from services.ai_provider import resolve_ai_provider
+    from services.openai_service import OpenAIError, is_configured as openai_configured
+    from services.gemini_service import GeminiError, is_configured as gemini_configured
+
+    transcript = _normalize_transcript_input((payload or {}).get("transcript"))
+    if not transcript.strip():
+        return JSONResponse(
+            status_code=400, content={"error": "Transcript is required."}
+        )
+    transcript = _clean_text(transcript, MAX_TEXT_LENGTH)
+
+    provider = resolve_ai_provider()
+    if provider == "openai" and not openai_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "OpenAI is not configured. Set OPENAI_API_KEY on the backend.",
+            },
+        )
+    if provider == "gemini" and not gemini_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Gemini is not configured. Set GEMINI_API_KEY on the backend.",
+            },
+        )
+
+    try:
+        if provider == "openai":
+            from services import openai_service
+
+            result = await asyncio.to_thread(
+                openai_service.analyze_transcript, transcript
+            )
+        else:
+            from services import gemini_service
+
+            result = await asyncio.to_thread(
+                gemini_service.analyze_transcript, transcript
+            )
+        result["provider"] = provider
+        return result
+    except (GeminiError, OpenAIError) as exc:
+        code = exc.status_code or 502
+        if code in (401, 403):
+            status = 502
+        elif code == 429:
+            status = 429
+        elif code == 503:
+            status = 503
+        elif code == 504:
+            status = 504
+        else:
+            status = 502 if exc.retryable else 400
+        return JSONResponse(status_code=status, content={"error": str(exc)})
+    except Exception as exc:
+        get_logger("screen_ai.analyze").error(
+            "analyze-transcript failed",
+            extra={"event": "analyze_transcript_error", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Transcript analysis failed unexpectedly."},
+        )
+
+
+@app.post("/api/improve-transcript")
+async def improve_transcript_api(request: Request, payload: dict = Body(...)):
+    """Improve transcript grammar/punctuation/readability. Returns the improved
+    text so the UI can show it BEFORE replacing the original."""
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
+    from services.ai_provider import resolve_ai_provider
+    from services.openai_service import OpenAIError, is_configured as openai_configured
+    from services.gemini_service import GeminiError, is_configured as gemini_configured
+
+    transcript = _normalize_transcript_input((payload or {}).get("transcript"))
+    if not transcript.strip():
+        return JSONResponse(
+            status_code=400, content={"error": "Transcript is required."}
+        )
+    transcript = _clean_text(transcript, MAX_TEXT_LENGTH)
+
+    provider = resolve_ai_provider()
+    if provider == "openai" and not openai_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "OpenAI is not configured. Set OPENAI_API_KEY on the backend.",
+            },
+        )
+    if provider == "gemini" and not gemini_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Gemini is not configured. Set GEMINI_API_KEY on the backend.",
+            },
+        )
+
+    try:
+        if provider == "openai":
+            from services import openai_service
+
+            result = await asyncio.to_thread(
+                openai_service.improve_transcript, transcript
+            )
+        else:
+            from services import gemini_service
+
+            result = await asyncio.to_thread(
+                gemini_service.improve_transcript, transcript
+            )
+        result["provider"] = provider
+        return result
+    except (GeminiError, OpenAIError) as exc:
+        code = exc.status_code or 502
+        if code in (401, 403):
+            status = 502
+        elif code == 429:
+            status = 429
+        elif code == 503:
+            status = 503
+        elif code == 504:
+            status = 504
+        else:
+            status = 502 if exc.retryable else 400
+        return JSONResponse(status_code=status, content={"error": str(exc)})
+    except Exception as exc:
+        get_logger("screen_ai.improve").error(
+            "improve-transcript failed",
+            extra={"event": "improve_transcript_error", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Transcript improvement failed unexpectedly."},
+        )
+
+
+@app.post("/api/improve-translation")
+async def improve_translation_api(request: Request, payload: dict = Body(...)):
+    """Improve a translation segment-by-segment (semantic accuracy, grammar,
+    naturalness, names/numbers/terms preserved). Returns improved segments so the
+    UI can show them BEFORE applying."""
+    user = require_authenticated_user(request)
+    enforce_rate_limit(request, user)
+    from services.ai_provider import resolve_ai_provider
+    from services.openai_service import OpenAIError, is_configured as openai_configured
+    from services.gemini_service import GeminiError, is_configured as gemini_configured
+
+    segments = (payload or {}).get("segments")
+    if not isinstance(segments, list) or not segments:
+        return JSONResponse(
+            status_code=400, content={"error": "segments are required."}
+        )
+    if len(segments) > 200:
+        return JSONResponse(
+            status_code=400, content={"error": "Too many segments (max 200)."}
+        )
+    cleaned = []
+    for seg in segments[:200]:
+        if not isinstance(seg, dict):
+            continue
+        original = seg.get("original")
+        translated = seg.get("translated")
+        if not isinstance(original, str) or not isinstance(translated, str):
+            continue
+        cleaned.append(
+            {
+                "id": seg.get("id"),
+                "original": _clean_text(original, 5000),
+                "translated": _clean_text(translated, 5000),
+            }
+        )
+    if not cleaned:
+        return JSONResponse(
+            status_code=400, content={"error": "No valid segments provided."}
+        )
+
+    provider = resolve_ai_provider()
+    if provider == "openai" and not openai_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "OpenAI is not configured. Set OPENAI_API_KEY on the backend.",
+            },
+        )
+    if provider == "gemini" and not gemini_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Gemini is not configured. Set GEMINI_API_KEY on the backend.",
+            },
+        )
+
+    try:
+        if provider == "openai":
+            from services import openai_service
+
+            result = await asyncio.to_thread(
+                openai_service.improve_translation, cleaned
+            )
+        else:
+            from services import gemini_service
+
+            result = await asyncio.to_thread(
+                gemini_service.improve_translation, cleaned
+            )
+        result["provider"] = provider
+        return result
+    except (GeminiError, OpenAIError) as exc:
+        code = exc.status_code or 502
+        if code in (401, 403):
+            status = 502
+        elif code == 429:
+            status = 429
+        elif code == 503:
+            status = 503
+        elif code == 504:
+            status = 504
+        else:
+            status = 502 if exc.retryable else 400
+        return JSONResponse(status_code=status, content={"error": str(exc)})
+    except Exception as exc:
+        get_logger("screen_ai.improve").error(
+            "improve-translation failed",
+            extra={"event": "improve_translation_error", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Translation improvement failed unexpectedly."},
+        )
 
 
 @app.post("/process-video")

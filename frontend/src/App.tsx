@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Toaster } from 'sonner';
 import DashboardView from './components/views/DashboardView';
 import { isRealFirebase } from './lib/firebase';
 import { getAuthenticatedProjectVideoUrl } from './services/api';
@@ -118,6 +119,7 @@ export default function App() {
   };
 
   return (
+    <>
     <DashboardView
       nav={{ appState, setAppState, mainView, setMainView, themeMode, toggleTheme, showSettings, setShowSettings }}
       authData={{
@@ -133,10 +135,6 @@ export default function App() {
         recentlyUsedVoiceIds: voice.recentlyUsedVoiceIds,
         handleToggleFavoriteVoice: voice.handleToggleFavoriteVoice,
         handleSetDefaultVoice: voice.handleSetDefaultVoice,
-        voiceSettings: voice.voiceSettings,
-        setVoiceSettings: voice.setVoiceSettings,
-        elevenLabsKey: voice.elevenLabsKey,
-        setElevenLabsKey: voice.setElevenLabsKey,
       }}
       projectsData={{
         projects: projects.projects,
@@ -178,5 +176,7 @@ export default function App() {
       chatData={chat}
       isRealFirebase={isRealFirebase}
     />
+    <Toaster position="bottom-right" theme={themeMode} richColors closeButton />
+    </>
   );
 }

@@ -23,7 +23,6 @@ export function useVoice() {
   const [favoriteVoiceIds, setFavoriteVoiceIds] = useState<string[]>([]);
   const [defaultVoiceId, setDefaultVoiceId] = useState<string | null>('el-george');
   const [recentlyUsedVoiceIds, setRecentlyUsedVoiceIds] = useState<string[]>([]);
-  const [elevenLabsKey, setElevenLabsKey] = useState('••••••••••••••••••••••••••••');
 
   // Load saved voice library preferences (favorites + default voice)
   useEffect(() => {
@@ -117,8 +116,6 @@ export function useVoice() {
     setDefaultVoiceId,
     recentlyUsedVoiceIds,
     setRecentlyUsedVoiceIds,
-    elevenLabsKey,
-    setElevenLabsKey,
     handleToggleFavoriteVoice,
     handleSetDefaultVoice,
     handleRecordVoiceUsed,

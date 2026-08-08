@@ -90,7 +90,7 @@ export function VideoPreviewCard({
               </p>
             ) : (
               <p className="mt-1 text-xs font-medium text-zinc-800 dark:text-zinc-100">
-                {detectedLanguage || "English"}
+                {detectedLanguage || "Unknown"}
                 {detectionConfidence != null ? (
                   <span className="ml-2 text-emerald-600 dark:text-emerald-400 font-mono text-[10px]">
                     {Math.round(detectionConfidence * 100)}%

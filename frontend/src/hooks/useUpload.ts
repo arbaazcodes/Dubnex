@@ -133,8 +133,9 @@ export function useUpload({
       setDetectionConfidence(data.confidence);
     } catch (err) {
       console.error('Spoken language detection error:', err);
-      setDetectedLanguage('English');
-      setDetectionConfidence(0.95);
+      // Detection is best-effort; leave language unknown rather than fabricate a result.
+      setDetectedLanguage(null);
+      setDetectionConfidence(null);
     } finally {
       setDetectingLanguage(false);
     }

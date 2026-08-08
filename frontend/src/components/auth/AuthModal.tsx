@@ -299,6 +299,7 @@ export default function AuthModal({
                   type="button"
                   disabled={loading}
                   onClick={() => switchMode(id)}
+                  aria-pressed={mode === id}
                   className={`py-2 rounded-lg text-[10px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer ${
                     mode === id
                       ? 'bg-white dark:bg-zinc-800 text-emerald-600 dark:text-emerald-400 shadow-sm'

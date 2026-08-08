@@ -28,6 +28,7 @@ from config import (
     REDIS_URL,
     STRICT_STARTUP,
     GEMINI_API_KEY,
+    OPENAI_API_KEY,
 )
 
 
@@ -223,6 +224,24 @@ def _check_gemini() -> dict[str, Any]:
         }
 
 
+def _check_openai() -> dict[str, Any]:
+    """OpenAI is optional; missing key warns but does not fail readiness."""
+    started = time.perf_counter()
+    try:
+        from services import openai_service
+
+        detail = openai_service.health_detail()
+        detail["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        return detail
+    except Exception as exc:
+        return {
+            "ok": True,
+            "configured": bool(OPENAI_API_KEY),
+            "warning": str(exc),
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+        }
+
+
 def run_checks(*, include_whisper: bool = True) -> dict[str, Any]:
     checks = {
         "database": _check_database(),
@@ -230,6 +249,7 @@ def run_checks(*, include_whisper: bool = True) -> dict[str, Any]:
         "firebase": _check_firebase(),
         "redis": _check_redis(),
         "gemini": _check_gemini(),
+        "openai": _check_openai(),
     }
     if include_whisper:
         checks["whisper"] = _check_whisper()
@@ -263,6 +283,11 @@ def run_startup_checks() -> dict[str, Any]:
             print(
                 "[startup]  - gemini: WARN GEMINI_API_KEY is not set "
                 "(Gemini translation/chat disabled; NLLB fallback used when auto)"
+            )
+        if name == "openai" and not detail.get("configured"):
+            print(
+                "[startup]  - openai: WARN OPENAI_API_KEY is not set "
+                "(OpenAI chat/analysis disabled; Gemini fallback used when auto)"
             )
 
     if STRICT_STARTUP and not result["ok"]:

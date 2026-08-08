@@ -1,5 +1,6 @@
 // useProjects — project list state, local cache, authenticated API sync, and CRUD handlers.
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import {
   saveUserProject,
   loadUserProjects,
@@ -112,9 +113,13 @@ export function useProjects({
       link.click();
       link.remove();
       URL.revokeObjectURL(objectUrl);
+      toast.success(`Downloaded "${project.title || 'video'}"`);
     } catch (err: any) {
       console.error('Download failed:', err);
       setUploadError(err?.message || 'Download failed');
+      toast.error('Download failed', {
+        description: err?.message || 'Could not download the video.',
+      });
     }
   };
 
@@ -134,6 +139,7 @@ export function useProjects({
       if (appState === 'result') setAppState('upload');
       if (mainView === 'project-details') setMainView('projects');
     }
+    toast.success('Project deleted');
   };
 
   const handleDuplicateProject = async (id: string) => {
@@ -160,6 +166,7 @@ export function useProjects({
     if (user) {
       await saveUserProject(user.uid, clone);
     }
+    toast.success(`Duplicated "${source.title}"`);
   };
 
   const handleSaveTranscript = async (updatedTranscript: TranscriptSegment[]) => {
@@ -187,6 +194,7 @@ export function useProjects({
     if (user && saved) {
       await saveUserProject(user.uid, saved);
     }
+    toast.success('Transcript saved');
   };
 
   // Load projects from authenticated API (+ optional Firestore/local cache)
