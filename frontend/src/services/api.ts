@@ -148,9 +148,61 @@ export async function translateVideo(
   }>;
 }
 
+/**
+ * Real spoken-language detection from the actual video file (backend extracts
+ * the audio track with ffmpeg and runs Whisper detect_language on it).
+ * Returns ISO language code + confidence. No filename heuristics.
+ */
+export async function detectVideoLanguage(
+  file: File
+): Promise<{ language: string; confidence: number }> {
+  const form = new FormData();
+  form.append("file", file);
+  const headers = await authHeaders();
+  const response = await fetch(`${API_BASE}/detect-video-language`, {
+    method: "POST",
+    body: form,
+    headers,
+  });
+  if (response.status === 401) {
+    throw new Error("Unauthorized — please sign in with Google and try again.");
+  }
+  if (!response.ok) {
+    throw new Error(`Language detection failed (HTTP ${response.status})`);
+  }
+  const data = await response.json();
+  return {
+    language: data.language || "unknown",
+    confidence: typeof data.confidence === "number" ? data.confidence : 0,
+  };
+}
+
 export async function getJobEventsUrl(jobId: string) {
   const base = `${API_BASE}/events/${encodeURIComponent(jobId)}`;
   return withAuthTokenParam(base);
+}
+
+/** Default text used for local voice previews (short for fast synthesis). */
+export const DEFAULT_PREVIEW_TEXT =
+  'Hello! This is Dubnex, your local AI voice preview.';
+
+/**
+ * Build an authenticated URL for a real TTS preview using the local Coqui
+ * engine. The endpoint is GET so the browser <audio> element can stream it
+ * directly. Falls back to the voice's static previewUrl when one exists.
+ */
+export async function resolveVoicePreviewUrl(
+  voice: { previewUrl?: string | null; apiVoiceKey?: string },
+  language = 'en',
+  text: string = DEFAULT_PREVIEW_TEXT
+): Promise<string> {
+  if (voice.previewUrl) return voice.previewUrl;
+  const params = new URLSearchParams({
+    text,
+    language,
+    voice: voice.apiVoiceKey || 'default',
+  });
+  return withAuthTokenParam(`${API_BASE}/tts-test?${params.toString()}`);
 }
 
 export async function fetchUserProjectsFromApi(): Promise<any[]> {

@@ -9,7 +9,7 @@ const voices: LibraryVoice[] = [
   {
     id: 'v1',
     name: 'Aria',
-    provider: 'ElevenLabs',
+    provider: 'Coqui TTS',
     gender: 'Female',
     accent: 'American',
     language: 'en',
@@ -17,12 +17,12 @@ const voices: LibraryVoice[] = [
     supportedLanguages: ['en', 'es'],
     tags: ['clear'],
     previewUrl: 'https://example.com/aria.mp3',
-    source: 'library',
+    source: 'local',
   },
   {
     id: 'v2',
     name: 'Bunty',
-    provider: 'ElevenLabs',
+    provider: 'Coqui TTS',
     gender: 'Male',
     accent: 'Indian English',
     language: 'hi',
@@ -30,12 +30,12 @@ const voices: LibraryVoice[] = [
     supportedLanguages: ['hi', 'en'],
     tags: ['friendly'],
     previewUrl: 'https://example.com/bunty.mp3',
-    source: 'library',
+    source: 'local',
   },
   {
     id: 'v3',
     name: 'Jessica',
-    provider: 'ElevenLabs',
+    provider: 'Coqui TTS',
     gender: 'Female',
     accent: 'American',
     language: 'en',
@@ -43,12 +43,12 @@ const voices: LibraryVoice[] = [
     supportedLanguages: ['en'],
     tags: ['professional'],
     previewUrl: null,
-    source: 'library',
+    source: 'local',
   },
   {
     id: 'v4',
     name: 'Marcus',
-    provider: 'ElevenLabs',
+    provider: 'Coqui TTS',
     gender: 'Neutral',
     accent: 'Australian',
     language: 'en',
@@ -56,7 +56,7 @@ const voices: LibraryVoice[] = [
     supportedLanguages: ['en', 'fr', 'de', 'ja'],
     tags: ['broadcast'],
     previewUrl: 'https://example.com/marcus.mp3',
-    source: 'library',
+    source: 'local',
   },
 ];
 
@@ -129,7 +129,7 @@ describe('VoiceStudio', () => {
     expect(card).toHaveTextContent('English');
     expect(card).toHaveTextContent('American');
     expect(card).toHaveTextContent('Narration');
-    expect(card).toHaveTextContent('ElevenLabs');
+    expect(card).toHaveTextContent('Coqui TTS');
     expect(screen.getByRole('group', { name: /Bunty/ })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: /Jessica/ })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: /Marcus/ })).toBeInTheDocument();

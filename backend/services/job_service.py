@@ -2,7 +2,7 @@ import uuid
 import os
 from datetime import datetime
 
-from config import TRANSLATION_MODEL, ELEVENLABS_MODEL
+from config import TRANSLATION_MODEL, TTS_MODEL
 from services.output_registry import register_project_output, secure_video_url, secure_download_url
 from services.logging_service import get_logger, set_job_id, reset_job_id
 from services.metrics_service import (
@@ -87,7 +87,7 @@ def create_job(
     meta = dict(metadata or {})
     meta.setdefault("voice", voice)
     meta.setdefault("translationModel", TRANSLATION_MODEL)
-    meta.setdefault("ttsModel", ELEVENLABS_MODEL)
+    meta.setdefault("ttsModel", TTS_MODEL)
     if owner_id:
         meta["owner_id"] = owner_id
 
@@ -368,7 +368,7 @@ def finish_job(job_id: str, result: dict):
         meta = job.setdefault("metadata", {})
         meta["voice"] = voice_used
         meta["translationModel"] = meta.get("translationModel") or TRANSLATION_MODEL
-        meta["ttsModel"] = meta.get("ttsModel") or ELEVENLABS_MODEL
+        meta["ttsModel"] = meta.get("ttsModel") or TTS_MODEL
 
         # Output file size (may already be set before storage upload)
         meta = job.setdefault("metadata", {})

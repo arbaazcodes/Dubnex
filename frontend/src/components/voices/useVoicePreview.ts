@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LibraryVoice } from '../../types';
+import { resolveVoicePreviewUrl } from '../../services/api';
 
 export type PreviewState = 'idle' | 'loading' | 'playing' | 'paused';
 
 /**
  * Single shared HTMLAudioElement for voice sample previews.
  * Stops any previous preview when starting a new one.
+ *
+ * For local Coqui TTS voices (previewUrl === null) a real sample is
+ * synthesized on demand via the /tts-test endpoint, so "Preview" actually
+ * plays the installed engine's voice instead of showing "unavailable".
  */
 export function useVoicePreview() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -32,7 +37,11 @@ export function useVoicePreview() {
 
   const toggle = useCallback(
     async (voice: LibraryVoice) => {
-      if (!voice.previewUrl) return;
+      // Local voices have no static sample URL but ARE previewable: synthesize
+      // a short sample with the backend Coqui engine on demand.
+      const previewUrl =
+        voice.previewUrl ?? (await resolveVoicePreviewUrl(voice).catch(() => null));
+      if (!previewUrl) return;
 
       // Same voice: pause / resume
       if (activeId === voice.id && audioRef.current) {
@@ -74,7 +83,7 @@ export function useVoicePreview() {
 
       audio.addEventListener('ended', onEnded);
       audio.addEventListener('error', onError);
-      audio.src = voice.previewUrl;
+      audio.src = previewUrl;
 
       try {
         await audio.play();

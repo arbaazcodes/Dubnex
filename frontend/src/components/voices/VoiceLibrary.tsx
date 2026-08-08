@@ -10,10 +10,11 @@ import {
   Languages,
   Heart,
   Plus,
-  Copy,
 } from 'lucide-react';
 import { LibraryVoice, VoiceSettings } from '../../types';
 import { targetLanguages } from '../../constants/data';
+import { voiceCanPreview } from '../../constants/voices';
+import { resolveVoicePreviewUrl } from '../../services/api';
 
 interface VoiceLibraryProps {
   voices: LibraryVoice[];
@@ -25,7 +26,7 @@ interface VoiceLibraryProps {
 }
 
 type GenderFilter = 'All' | 'Male' | 'Female' | 'Neutral';
-type SourceFilter = 'All' | 'library' | 'custom' | 'clone';
+type SourceFilter = 'All' | 'local' | 'default' | 'cloned';
 
 function languageLabel(code: string) {
   const found = targetLanguages.find((l) => l.code === code);
@@ -92,14 +93,17 @@ export default function VoiceLibrary({
     favoriteIds,
   ]);
 
-  const handlePreview = (voice: LibraryVoice) => {
-    if (!voice.previewUrl) {
+  const handlePreview = async (voice: LibraryVoice) => {
+    // Local Coqui voices have no static URL — resolve a real preview sample
+    // synthesized on demand by the backend.
+    const src = voice.previewUrl ?? (await resolveVoicePreviewUrl(voice).catch(() => null));
+    if (!src) {
       setPreviewNotice(`Preview unavailable for “${voice.name}”.`);
       window.setTimeout(() => setPreviewNotice(null), 2800);
       return;
     }
     try {
-      const audio = new Audio(voice.previewUrl);
+      const audio = new Audio(src);
       setPreviewingId(voice.id);
       audio.onended = () => setPreviewingId(null);
       audio.onerror = () => {
@@ -124,28 +128,21 @@ export default function VoiceLibrary({
             Voice Library
           </h1>
           <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1 max-w-xl">
-            Browse ElevenLabs voices, favorite presets, and set the default project voice.
-            Preview controls are disabled when no sample URL is configured. TTS generation is unchanged.
+            Browse Coqui TTS voices (local, free), favorite presets, and set the default project voice.
+            Preview controls are disabled when no sample URL is configured. TTS generation uses local XTTS v2.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled
-            title="Voice cloning arrives in a later sprint"
-            className="px-3.5 py-2 rounded-xl text-[11px] font-mono font-bold uppercase tracking-wide bg-zinc-100 dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-700 text-zinc-400 cursor-not-allowed flex items-center gap-1.5"
-          >
-            <Copy className="w-3.5 h-3.5" />
-            Clone Voice
-          </button>
-          <button
-            type="button"
-            disabled
-            title="Custom voices arrive in a later sprint"
-            className="px-3.5 py-2 rounded-xl text-[11px] font-mono font-bold uppercase tracking-wide bg-zinc-100 dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-700 text-zinc-400 cursor-not-allowed flex items-center gap-1.5"
+            onClick={() => {
+              // Voice cloning is available with Coqui TTS - select the cloned voice
+              onSetDefault(voices.find(v => v.id === 'coqui-cloned')!);
+            }}
+            className="px-3.5 py-2 rounded-xl text-[11px] font-mono font-bold uppercase tracking-wide bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
-            Custom Voice
+            Clone Voice (Local)
           </button>
           <button
             type="button"
@@ -227,9 +224,9 @@ export default function VoiceLibrary({
             className="text-[10px] font-mono bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg px-2.5 py-1.5 text-zinc-700 dark:text-zinc-200 cursor-pointer"
           >
             <option value="All">Source: All</option>
-            <option value="library">Library</option>
-            <option value="custom">Custom</option>
-            <option value="clone">Clone</option>
+            <option value="local">Local TTS</option>
+            <option value="default">Default (Built-in)</option>
+            <option value="cloned">Cloned Voice</option>
           </select>
           <span className="text-[10px] font-mono text-zinc-400 ml-auto">
             {filtered.length} voice{filtered.length === 1 ? '' : 's'}
@@ -282,9 +279,9 @@ export default function VoiceLibrary({
                       <span className="text-[9px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
                         {voice.provider}
                       </span>
-                      {voice.source !== 'library' && (
+                      {voice.source === 'cloned' && (
                         <span className="text-[9px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
-                          {voice.source}
+                          Clone
                         </span>
                       )}
                       {isDefault && (
@@ -360,16 +357,16 @@ export default function VoiceLibrary({
                   <button
                     type="button"
                     onClick={() => handlePreview(voice)}
-                    disabled={!voice.previewUrl}
-                    title={voice.previewUrl ? `Preview ${voice.name}` : 'Preview unavailable'}
+                    disabled={!voiceCanPreview(voice)}
+                    title={voiceCanPreview(voice) ? `Preview ${voice.name}` : 'Preview unavailable'}
                     className={`py-2 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wide flex items-center justify-center gap-1.5 border ${
-                      voice.previewUrl
+                      voiceCanPreview(voice)
                         ? 'bg-zinc-100 dark:bg-zinc-950 border-zinc-200/60 dark:border-zinc-800 hover:border-emerald-500/40 cursor-pointer'
                         : 'bg-zinc-100 dark:bg-zinc-950 border-zinc-200/40 dark:border-zinc-800 text-zinc-400 cursor-not-allowed'
                     }`}
                   >
                     <Volume2 className={`w-3.5 h-3.5 ${isPreviewing ? 'text-emerald-500 animate-pulse' : ''}`} />
-                    {!voice.previewUrl
+                    {!voiceCanPreview(voice)
                       ? 'Unavailable'
                       : isPreviewing
                         ? 'Playing…'
@@ -403,32 +400,6 @@ export default function VoiceLibrary({
           })}
         </div>
       )}
-
-      {/* Future model hooks */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-950/30 px-4 py-4">
-          <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Voice Clone</p>
-          <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
-            Data model supports <code className="font-mono text-[10px]">source: clone</code> and{' '}
-            <code className="font-mono text-[10px]">cloneStatus</code>. Upload a short sample later to
-            create a project-specific clone without changing the TTS pipeline today.
-          </p>
-          <span className="inline-block mt-2 text-[9px] font-mono font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
-            Coming soon
-          </span>
-        </div>
-        <div className="rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-950/30 px-4 py-4">
-          <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Custom Voices</p>
-          <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
-            Custom entries use <code className="font-mono text-[10px]">provider: Custom</code> and{' '}
-            <code className="font-mono text-[10px]">isCustom</code>. Ready for user-managed voices in
-            a later sprint.
-          </p>
-          <span className="inline-block mt-2 text-[9px] font-mono font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
-            Coming soon
-          </span>
-        </div>
-      </div>
     </div>
   );
 }
@@ -436,7 +407,8 @@ export default function VoiceLibrary({
 /** Map a library voice into existing VoiceSettings without touching TTS generation */
 export function libraryVoiceToSettings(voice: LibraryVoice, previous?: VoiceSettings): VoiceSettings {
   return {
-    gender: voice.gender,
+    // Cloned/custom voices don't map to a preset gender — default to Neutral.
+    gender: voice.gender === 'Custom' ? 'Neutral' : voice.gender,
     speed: previous?.speed ?? 1.0,
     pitch: previous?.pitch ?? 1.0,
     emotion: previous?.emotion ?? 'Professional',

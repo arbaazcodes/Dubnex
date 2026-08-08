@@ -7,7 +7,7 @@ export type TTSVoiceEngine =
   | 'XTTS v2'
   | 'F5-TTS'
   | 'OpenVoice v2'
-  | 'ElevenLabs';
+  | 'Coqui TTS';
 
 export interface VoiceSettings {
   gender: 'Male' | 'Female' | 'Neutral';
@@ -20,8 +20,8 @@ export interface VoiceSettings {
 }
 
 /** Voice Library catalog entry (UI + future clone/custom) */
-export type VoiceProvider = 'ElevenLabs' | 'Custom' | 'Clone';
-export type VoiceSource = 'library' | 'custom' | 'clone';
+export type VoiceProvider = 'Coqui TTS' | 'Custom' | 'Clone';
+export type VoiceSource = 'local' | 'default' | 'cloned';
 
 export type VoiceCategory =
   | 'Narration'
@@ -31,13 +31,15 @@ export type VoiceCategory =
   | 'Corporate'
   | 'Audiobook'
   | 'Social'
-  | 'Multilingual';
+  | 'Multilingual'
+  | 'Default'
+  | 'Voice Cloning';
 
 export interface LibraryVoice {
   id: string;
   name: string;
   provider: VoiceProvider;
-  gender: 'Male' | 'Female' | 'Neutral';
+  gender: 'Male' | 'Female' | 'Neutral' | 'Custom';
   accent: string;
   /** Primary display language code (ISO), usually first supported language */
   language: string;

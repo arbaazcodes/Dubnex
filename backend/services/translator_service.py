@@ -67,6 +67,34 @@ _model = None
 _device = "cpu"
 _nllb_load_attempted = False
 
+# Set to True when the preferred provider (Gemini) fails with a transient
+# error and auto-mode is active, so we stop hammering a degraded API and
+# route straight to NLLB for the rest of the process.
+_gemini_degraded = False
+
+
+def _provider_mode() -> str:
+    """Raw configured mode: 'auto' | 'gemini' | 'nllb' (never falls back)."""
+    return (TRANSLATION_PROVIDER or "auto").strip().lower()
+
+
+def _fallback_allowed() -> bool:
+    """Explicit TRANSLATION_PROVIDER=gemini must stay strict (no NLLB fallback)."""
+    return _provider_mode() != "gemini"
+
+
+def _mark_gemini_degraded(exc: BaseException) -> None:
+    global _gemini_degraded
+    _gemini_degraded = True
+    logger.warning(
+        "Gemini translation failed (%s); switching to NLLB fallback",
+        str(exc)[:160],
+        extra={
+            "event": "translator_gemini_degraded",
+            "error_type": type(exc).__name__,
+        },
+    )
+
 
 def resolve_translation_provider() -> str:
     mode = (TRANSLATION_PROVIDER or "auto").strip().lower()
@@ -157,34 +185,57 @@ def _translate_batch_nllb(
     return [o if o is not None else "" for o in outputs]
 
 
+def _translate_batch_gemini(
+    texts: list[str], source_language: str, target_language: str
+) -> list[str]:
+    """Gemini path (per-text translate). Raises GeminiError on failure."""
+    from services import gemini_service
+
+    if not gemini_service.is_configured():
+        raise RuntimeError("TRANSLATION_PROVIDER=gemini but GEMINI_API_KEY is not set.")
+    return [
+        gemini_service.translate_text(t, source_language, target_language)
+        if (t or "").strip()
+        else ""
+        for t in texts
+    ]
+
+
 def _translate_batch(
     texts: list[str], source_language: str, target_language: str
 ) -> list[str]:
     provider = resolve_translation_provider()
-    if provider == "gemini":
-        from services import gemini_service
+    if provider == "nllb":
+        return _translate_batch_nllb(texts, source_language, target_language)
+    if _gemini_degraded and _fallback_allowed():
+        return _translate_batch_nllb(texts, source_language, target_language)
+    from services import gemini_service
 
-        if not gemini_service.is_configured():
-            raise RuntimeError(
-                "TRANSLATION_PROVIDER=gemini but GEMINI_API_KEY is not set."
-            )
-        return [
-            gemini_service.translate_text(t, source_language, target_language)
-            if (t or "").strip()
-            else ""
-            for t in texts
-        ]
-    return _translate_batch_nllb(texts, source_language, target_language)
+    try:
+        return _translate_batch_gemini(texts, source_language, target_language)
+    except gemini_service.GeminiError as exc:
+        if not _fallback_allowed():
+            raise
+        _mark_gemini_degraded(exc)
+        return _translate_batch_nllb(texts, source_language, target_language)
 
 
 def translate_text(text: str, source_language: str, target_language: str):
     source_language, target_language = _normalize_langs(source_language, target_language)
     provider = resolve_translation_provider()
-    if provider == "gemini":
-        from services import gemini_service
+    if provider == "nllb":
+        return _translate_batch_nllb([text], source_language, target_language)[0]
+    if _gemini_degraded and _fallback_allowed():
+        return _translate_batch_nllb([text], source_language, target_language)[0]
+    from services import gemini_service
 
+    try:
         return gemini_service.translate_text(text, source_language, target_language)
-    return _translate_batch([text], source_language, target_language)[0]
+    except gemini_service.GeminiError as exc:
+        if not _fallback_allowed():
+            raise
+        _mark_gemini_degraded(exc)
+        return _translate_batch_nllb([text], source_language, target_language)[0]
 
 
 def translate_segments(
@@ -201,9 +252,13 @@ def translate_segments(
         return []
 
     provider = resolve_translation_provider()
-    if provider == "gemini":
-        from services import gemini_service
+    if provider == "nllb":
+        return _translate_segments_nllb(segments, source_language, target_language)
+    if _gemini_degraded and _fallback_allowed():
+        return _translate_segments_nllb(segments, source_language, target_language)
+    from services import gemini_service
 
+    try:
         # Process in batches to keep prompts bounded
         batch_size = TRANSLATION_BATCH_SIZE
         out: list[dict] = []
@@ -215,13 +270,25 @@ def translate_segments(
                 )
             )
         return out
+    except gemini_service.GeminiError as exc:
+        if not _fallback_allowed():
+            raise
+        _mark_gemini_degraded(exc)
+        return _translate_segments_nllb(segments, source_language, target_language)
 
+
+def _translate_segments_nllb(
+    segments: list,
+    source_language: str,
+    target_language: str,
+):
+    """Translate segments locally with NLLB, preserving id/start/end/duration."""
     batch_size = TRANSLATION_BATCH_SIZE
     translated_segments = []
     for start in range(0, len(segments), batch_size):
         chunk = segments[start : start + batch_size]
         texts = [seg.get("text") or "" for seg in chunk]
-        translated_texts = _translate_batch(texts, source_language, target_language)
+        translated_texts = _translate_batch_nllb(texts, source_language, target_language)
         for segment, translated_text in zip(chunk, translated_texts):
             translated_segments.append(
                 {

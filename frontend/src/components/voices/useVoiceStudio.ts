@@ -31,7 +31,7 @@ const RECOMMENDATION_DEFAULT_LIMIT = 4;
  * Deterministic, client-side recommendation scoring. Higher is better.
  * Signal sources: target-language support, current selection, favorites,
  * recency, studio defaults, multilingual versatility, gender neutrality.
- * No backend or ElevenLabs integration is touched.
+ * No backend or external TTS integration is touched.
  */
 export function recommendVoices(config: VoiceStudioConfig, limit = RECOMMENDATION_DEFAULT_LIMIT): RecommendedVoice[] {
   const { voices, favoriteIds, defaultVoiceId, recentlyUsedIds, targetLanguage } = config;

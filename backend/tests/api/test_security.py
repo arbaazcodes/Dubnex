@@ -44,7 +44,6 @@ UNAUTHENTICATED_ENDPOINTS = [
     # -- formerly unauthenticated endpoints now gated --
     ("post", "/job", {}),
     ("get", "/job/some-job-id", {}),
-    ("post", "/api/detect-language", {"json": {"filename": "clip.mp4"}}),
     ("post", "/api/transcribe-audio", {"json": {"audio": "bGVsbG8="}}),
     ("post", "/api/analyze-video", {"json": {"title": "Active Video"}}),
     ("get", "/api/pipeline-sse", {"params": {"jobId": "abc"}}),
@@ -239,12 +238,17 @@ def test_detect_language_rate_limited(authed_client, monkeypatch):
     monkeypatch.setattr(app_config, "RATE_LIMIT_ENABLED", True)
     monkeypatch.setattr(app_config, "RATE_LIMIT_MAX_PER_USER", 2)
     monkeypatch.setattr(app_config, "RATE_LIMIT_MAX_PER_IP", 100)
+    # Real audio-upload endpoint (whisper stubbed in tests -> 200).
     for _ in range(2):
         res = authed_client.post(
-            "/api/detect-language", json={"filename": "clip.mp4"}
+            "/detect-language",
+            files={"file": ("a.mp3", b"ID3" + b"\x00" * 32)},
         )
         assert res.status_code == 200
-    res = authed_client.post("/api/detect-language", json={"filename": "clip.mp4"})
+    res = authed_client.post(
+        "/detect-language",
+        files={"file": ("a.mp3", b"ID3" + b"\x00" * 32)},
+    )
     assert res.status_code == 429
 
 

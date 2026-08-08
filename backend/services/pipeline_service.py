@@ -140,7 +140,7 @@ async def process_video(
             )
 
     # Step 5 - Generate segment audio (controlled concurrency + resume)
-    report("TTS", f"Generating speech with ElevenLabs (voice={voice})")
+    report("TTS", f"Generating speech with Coqui TTS XTTS v2 (voice={voice})")
     if resolved_job_id:
         tts_dir = tts_job_dir(resolved_job_id)
     else:

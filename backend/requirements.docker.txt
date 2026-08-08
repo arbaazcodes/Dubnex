@@ -7,7 +7,8 @@ openai>=1.60.0
 ffmpeg-python
 faster-whisper
 transformers
-elevenlabs
+torch
+TTS
 boto3
 sqlalchemy
 psycopg[binary]

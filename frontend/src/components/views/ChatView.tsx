@@ -36,8 +36,8 @@ interface ChatViewProps {
   setChatInput: (value: string) => void;
   chatRole: 'director' | 'language' | 'coach';
   setChatRole: (role: 'director' | 'language' | 'coach') => void;
-  chatModel: 'gemini-3.1-pro-preview' | 'gemini-3.5-flash' | 'gemini-3.1-flash-lite';
-  setChatModel: (model: 'gemini-3.1-pro-preview' | 'gemini-3.5-flash' | 'gemini-3.1-flash-lite') => void;
+  chatModel: 'gpt-4o-mini' | 'gpt-4o' | 'gpt-4.1-mini';
+  setChatModel: (model: 'gpt-4o-mini' | 'gpt-4o' | 'gpt-4.1-mini') => void;
   chatLoading: boolean;
   handleSendChatMessage: (event: FormEvent) => void;
   chatEndRef: RefObject<HTMLDivElement | null>;
@@ -69,9 +69,7 @@ interface ChatViewProps {
   stopRecording: () => void;
   transcribeRecording: () => void;
   liveVoiceActive: boolean;
-  liveCaptions: string[];
   liveStatusText: string;
-  toggleLiveVoiceSession: () => void;
 }
 
 export default function ChatView(props: ChatViewProps) {
@@ -118,9 +116,7 @@ export default function ChatView(props: ChatViewProps) {
     stopRecording,
     transcribeRecording,
     liveVoiceActive,
-    liveCaptions,
     liveStatusText,
-    toggleLiveVoiceSession,
   } = props;
 
   const copyText = async (text: string) => {
@@ -218,15 +214,15 @@ export default function ChatView(props: ChatViewProps) {
                     </div>
 
                     <div className="space-y-1">
-                      <span className="text-zinc-400 font-mono uppercase block font-bold">Gemini Model</span>
+                      <span className="text-zinc-400 font-mono uppercase block font-bold">OpenAI Model</span>
                       <select
                         value={chatModel}
                         onChange={(e: any) => setChatModel(e.target.value)}
                         className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-1.5 py-1 text-[10px] focus:outline-none"
                       >
-                        <option value="gemini-3.1-pro-preview">3.1 Pro (Reasoning)</option>
-                        <option value="gemini-3.5-flash">3.5 Flash (General)</option>
-                        <option value="gemini-3.1-flash-lite">3.1 Lite (Fast)</option>
+                        <option value="gpt-4o-mini">4o Mini (Fast)</option>
+                        <option value="gpt-4o">4o (General)</option>
+                        <option value="gpt-4.1-mini">4.1 Mini (Balanced)</option>
                       </select>
                     </div>
 
@@ -620,40 +616,29 @@ export default function ChatView(props: ChatViewProps) {
                       Live Voice Companion
                     </h3>
                     <p className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest">
-                      Status: <span className={liveVoiceActive ? "text-emerald-500 font-bold" : "text-zinc-500"}>{liveStatusText}</span>
+                      Status: <span className="text-zinc-500">{liveStatusText}</span>
                     </p>
                   </div>
 
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100/70 dark:bg-amber-900/30 border border-amber-300/60 dark:border-amber-700/50">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                    <span className="text-[10px] font-mono font-bold text-amber-700 dark:text-amber-400 uppercase tracking-widest">Not available yet</span>
+                  </div>
+
                   <p className="text-[11px] text-zinc-400 leading-relaxed max-w-xs">
-                    Stream your voice to the backend voice session and read live replies. Use it for spoken notes and verbal brainstorming.
+                    The backend voice-session API is not implemented, so live voice is disabled rather than faked. Use
+                    <span className="text-zinc-600 dark:text-zinc-300 font-semibold"> mic dubbing</span> (above) for real speech-to-text, or the chatbot for text chat.
                   </p>
 
                   <div className="w-full">
-                    {liveVoiceActive ? (
-                      <button
-                        onClick={toggleLiveVoiceSession}
-                        className="w-full py-3 bg-rose-500 hover:bg-rose-400 text-white font-extrabold text-xs font-mono rounded-xl transition-all shadow-md cursor-pointer uppercase tracking-wider"
-                      >
-                        Disconnect Voice Session
-                      </button>
-                    ) : (
-                      <button
-                        onClick={toggleLiveVoiceSession}
-                        className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-extrabold text-xs font-mono rounded-xl transition-all shadow-md cursor-pointer uppercase tracking-wider"
-                      >
-                        Start Live Conversation
-                      </button>
-                    )}
+                    <button
+                      disabled
+                      aria-disabled="true"
+                      className="w-full py-3 bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-500 font-extrabold text-xs font-mono rounded-xl uppercase tracking-wider cursor-not-allowed opacity-60"
+                    >
+                      Live Voice Unavailable
+                    </button>
                   </div>
-
-                  {/* Captions thread block */}
-                  {liveVoiceActive && liveCaptions.length > 0 && (
-                    <div className="w-full bg-zinc-50 dark:bg-zinc-950 p-3 rounded-xl border border-zinc-200/40 dark:border-zinc-850 text-left text-[11px] max-h-[110px] overflow-y-auto space-y-1 mt-2 font-mono">
-                      {liveCaptions.map((cap, idx) => (
-                        <p key={idx} className="text-zinc-400 leading-normal">{cap}</p>
-                      ))}
-                    </div>
-                  )}
 
                 </div>
               )}

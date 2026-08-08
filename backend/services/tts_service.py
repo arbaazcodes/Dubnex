@@ -4,16 +4,25 @@ import os
 import tempfile
 from typing import Any, Callable
 
-from config import OUTPUT_DIR, TEMP_DIR, TTS_CONCURRENCY, TTS_429_MAX_RETRIES
-from services.elevenlabs_limiter import (
-    compute_backoff_seconds,
-    get_limiter,
+from config import (
+    OUTPUT_DIR,
+    TEMP_DIR,
+    TTS_CONCURRENCY,
+    TTS_PROVIDER,
+    TTS_MODEL,
+    TTS_DEVICE,
+    TTS_LANGUAGE,
+    TTS_SPEAKER_WAV,
+    TTS_SPEED,
+    TTS_CONCURRENCY_MIN,
+    TTS_REQUEST_TIMEOUT_SECONDS,
 )
-from services.elevenlabs_service import (
-    TtsErrorKind,
-    TtsRequestError,
-    generate_speech as eleven_generate_speech,
-    synthesize_to_file,
+from services.tts_provider import (
+    TTSProvider,
+    TTSProviderConfig,
+    TTSError,
+    TTSErrorKind,
+    create_provider,
 )
 from services.logging_service import get_job_id, get_logger
 
@@ -23,6 +32,27 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 logger = get_logger("screen_ai.tts")
 
 MANIFEST_NAME = "manifest.json"
+
+
+# Global provider instance (initialized on first use)
+_provider: TTSProvider | None = None
+
+
+def _get_provider() -> TTSProvider:
+    """Get or create the global TTS provider instance."""
+    global _provider
+    if _provider is None:
+        config = TTSProviderConfig(
+            model=TTS_MODEL,
+            device=TTS_DEVICE,
+            language=TTS_LANGUAGE,
+            speaker_wav=TTS_SPEAKER_WAV,
+            speed=TTS_SPEED,
+            concurrency=TTS_CONCURRENCY,
+            request_timeout_seconds=TTS_REQUEST_TIMEOUT_SECONDS,
+        )
+        _provider = create_provider(TTS_PROVIDER, config)
+    return _provider
 
 
 def _kind_value(kind) -> str:
@@ -82,25 +112,33 @@ def _segment_done_on_disk(job_dir: str, segment_id: int, entry: dict | None) -> 
 
 async def generate_speech(
     text: str,
-    language: str = "hindi",
+    language: str = "en",
     filename: str = "speech.mp3",
-    voice: str = "george",
+    voice: str = "default",
 ):
     """
-    Generate a single MP3 using ElevenLabs.
+    Generate a single MP3 using the configured TTS provider.
     """
-    return await asyncio.to_thread(
-        eleven_generate_speech,
-        text=text,
-        filename=filename,
-        voice=voice,
-    )
+    provider = _get_provider()
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+
+    def _sync_synthesize():
+        return provider.synthesize(
+            text=text,
+            output_path=filepath,
+            language=language,
+            speaker_wav=None,  # Use default from config
+            speed=None,  # Use default from config
+        )
+
+    return await asyncio.to_thread(_sync_synthesize)
 
 
 async def generate_segment_speech(
     segments: list,
-    language: str = "hindi",
-    voice: str = "george",
+    language: str = "en",
+    voice: str = "default",
     work_dir: str | None = None,
     job_id: str | None = None,
     on_progress: Callable[[str, str], None] | None = None,
@@ -110,13 +148,13 @@ async def generate_segment_speech(
 
     Phase 1:
       - per-job checkpoint manifest under TEMP_DIR/tts_jobs/{job_id}/
-      - adaptive concurrency via ElevenLabsLimiter
+      - simple concurrency control (local TTS is CPU-bound, keep low)
       - resume completed segments
-      - Retry-After + exp backoff + jitter on 429 / transient errors
     """
     if not segments:
         return []
 
+    provider = _get_provider()
     resolved_job_id = job_id or get_job_id()
     if work_dir:
         segment_dir = work_dir
@@ -172,11 +210,9 @@ async def generate_segment_speech(
 
     def _report():
         if on_progress:
-            lim = get_limiter().snapshot()
             on_progress(
                 "TTS",
-                f"Segments {done_count}/{total} (concurrency={lim['current']}"
-                f"{', sequential' if lim['sequential'] else ''})",
+                f"Segments {done_count}/{total} (concurrency={TTS_CONCURRENCY})",
             )
 
     _report()
@@ -194,7 +230,6 @@ async def generate_segment_speech(
 
     manifest_lock = asyncio.Lock()
     failures: list[str] = []
-    limiter = get_limiter()
 
     async def _persist_done(seg: dict, filepath: str, attempts: int) -> None:
         nonlocal done_count
@@ -232,23 +267,24 @@ async def generate_segment_speech(
         dest = os.path.join(segment_dir, segment_filename(sid))
         attempts = 0
         last_exc: BaseException | None = None
+        max_retries = 3  # Local TTS: simple retry for transient failures
 
         logger.info(
             "TTS segment start",
             extra={"event": "tts_segment_start", "segment_id": sid, "job_id": resolved_job_id},
         )
 
-        while attempts <= TTS_429_MAX_RETRIES:
+        while attempts <= max_retries:
             attempts += 1
             try:
-                async with limiter.slot():
-                    filepath = await asyncio.to_thread(
-                        synthesize_to_file,
-                        seg["translated"],
-                        dest,
-                        voice,
-                    )
-                await limiter.on_success()
+                filepath = await asyncio.to_thread(
+                    provider.synthesize,
+                    text=seg["translated"],
+                    output_path=dest,
+                    language=language,
+                    speaker_wav=None,  # Use default from config
+                    speed=None,  # Use default from config
+                )
                 await _persist_done(seg, filepath, attempts)
                 logger.info(
                     "TTS segment done",
@@ -260,9 +296,9 @@ async def generate_segment_speech(
                     },
                 )
                 return
-            except TtsRequestError as exc:
+            except TTSError as exc:
                 last_exc = exc
-                if exc.kind == TtsErrorKind.FATAL or _kind_value(exc.kind) == "fatal" or attempts > TTS_429_MAX_RETRIES:
+                if exc.kind == TTSErrorKind.FATAL or _kind_value(exc.kind) == "fatal" or attempts > max_retries:
                     await _persist_failed(seg, attempts, str(exc))
                     failures.append(f"segment {sid}: {exc}")
                     logger.error(
@@ -278,14 +314,8 @@ async def generate_segment_speech(
                     )
                     return
 
-                retry_after = exc.retry_after
-                if exc.kind == TtsErrorKind.RATE_LIMIT or _kind_value(exc.kind) == "rate_limit":
-                    await limiter.on_rate_limited(retry_after)
-
-                wait_time = compute_backoff_seconds(
-                    attempts - 1,
-                    retry_after=retry_after,
-                )
+                # Retryable error - wait and retry
+                wait_time = min(2 ** (attempts - 1), 30)  # Exponential backoff: 1, 2, 4... max 30s
                 logger.warning(
                     "TTS segment retry",
                     extra={
@@ -293,7 +323,6 @@ async def generate_segment_speech(
                         "segment_id": sid,
                         "attempts": attempts,
                         "wait_time_seconds": wait_time,
-                        "retry_after": retry_after,
                         "kind": _kind_value(exc.kind),
                         "job_id": resolved_job_id,
                     },

@@ -1,7 +1,7 @@
 // useChat — AI Studio suite: AI chatbot, video analyst, transcript intelligence, mic dubbing recorder, live voice session.
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { API_BASE, authHeaders, getWebSocketUrl } from '../services/api';
+import { API_BASE, authHeaders } from '../services/api';
 import type { Project, TranscriptSegment } from '../types';
 import type { VideoMetadata } from './useUpload';
 
@@ -51,7 +51,10 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatRole, setChatRole] = useState<'director' | 'language' | 'coach'>('director');
-  const [chatModel, setChatModel] = useState<'gemini-3.1-pro-preview' | 'gemini-3.5-flash' | 'gemini-3.1-flash-lite'>('gemini-3.5-flash');
+  // Chat always runs through OpenAI (backend AI_PROVIDER=auto picks OpenAI when
+  // OPENAI_API_KEY is set). The selector offers OpenAI models only — the backend
+  // maps any unknown label to its configured OpenAI model, so these pass through.
+  const [chatModel, setChatModel] = useState<'gpt-4o-mini' | 'gpt-4o' | 'gpt-4.1-mini'>('gpt-4o-mini');
   const [chatLoading, setChatLoading] = useState(false);
 
   // 2. Video Analysis & Audio Transcribing states
@@ -381,9 +384,14 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
   };
 
   // LIVE CONVERSATION ACTIONS
+  // NOTE: The backend does not implement a real live voice session (the /live
+  // websocket is a placeholder). Per product policy, a frontend action must have
+  // a real backend implementation or be clearly disabled — so this is disabled
+  // with an explanation rather than faking a connection.
+  const LIVE_VOICE_UNAVAILABLE = 'Live voice is not available yet — the backend voice-session API is not implemented. Use mic dubbing (above) for speech-to-text.';
   const toggleLiveVoiceSession = async () => {
     if (liveVoiceActive) {
-      // Disconnect
+      // Disconnect (only reachable if a session ever became active)
       setLiveVoiceActive(false);
       setLiveStatusText('Disconnected');
       if (liveWsRef.current) {
@@ -392,77 +400,13 @@ export function useChat({ activeProject, videoMetadata }: UseChatOptions) {
       if (audioCtxRef.current) {
         try { audioCtxRef.current.close(); } catch (e) {}
       }
-    } else {
-      // Connect
-      setLiveStatusText('Connecting to voice session...');
-      setLiveCaptions([]);
-      try {
-        const ws = new WebSocket(await getWebSocketUrl('/live', true));
-        liveWsRef.current = ws;
-
-        ws.onopen = () => {
-          setLiveVoiceActive(true);
-          setLiveStatusText('Connected to voice session');
-          setLiveCaptions(["Voice session active. Speak now..."]);
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const msg = JSON.parse(event.data);
-            if (msg.text) {
-              setLiveCaptions(prev => [...prev, `AI: ${msg.text}`]);
-            }
-            if (msg.error) {
-              setLiveStatusText(`Error: ${msg.error}`);
-            }
-          } catch (e) {}
-        };
-
-        ws.onclose = () => {
-          setLiveVoiceActive(false);
-          setLiveStatusText('Disconnected');
-        };
-
-        ws.onerror = () => {
-          setLiveStatusText('Connection error');
-        };
-
-        // Access mic at 16kHz
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-        audioCtxRef.current = audioContext;
-        const source = audioContext.createMediaStreamSource(stream);
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
-        source.connect(processor);
-        processor.connect(audioContext.destination);
-
-        processor.onaudioprocess = (e) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            const channelData = e.inputBuffer.getChannelData(0);
-            // Convert to 16bit PCM
-            let l = channelData.length;
-            let buf = new Int16Array(l);
-            while (l--) {
-              let s = Math.max(-1, Math.min(1, channelData[l]));
-              buf[l] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            }
-            // Base64 encode
-            let binary = '';
-            let bytes = new Uint8Array(buf.buffer);
-            let len = bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            const base64 = window.btoa(binary);
-            ws.send(JSON.stringify({ audio: base64 }));
-          }
-        };
-
-      } catch (err) {
-        console.error("Live connection fail:", err);
-        setLiveStatusText('Failed to initialize local mic or websocket.');
-      }
+      return;
     }
+    // Clearly disabled — do not open a fake websocket.
+    setLiveVoiceActive(false);
+    setLiveCaptions([]);
+    setLiveStatusText('Unavailable');
+    toast.info(LIVE_VOICE_UNAVAILABLE);
   };
 
   return {

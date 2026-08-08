@@ -7,46 +7,46 @@ import { resolveApiVoiceKey } from '../../constants/voices';
 
 const voices: LibraryVoice[] = [
   {
-    id: 'el-george',
-    name: 'George',
-    provider: 'ElevenLabs',
-    gender: 'Male',
-    accent: 'British',
+    id: 'coqui-default',
+    name: 'Default (XTTS v2 Built-in)',
+    provider: 'Coqui TTS',
+    gender: 'Neutral',
+    accent: 'Multilingual',
     language: 'en',
-    category: 'Narration',
-    supportedLanguages: ['en', 'es'],
-    tags: ['narrative'],
+    category: 'Default',
+    supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh', 'ja', 'hu', 'ko', 'hi'],
+    tags: ['multilingual', 'default', 'free', 'local'],
     previewUrl: null,
-    apiVoiceKey: 'george',
-    source: 'library',
+    apiVoiceKey: 'default',
+    source: 'local',
   },
   {
-    id: 'el-bunty',
-    name: 'Bunty',
-    provider: 'ElevenLabs',
+    id: 'coqui-cloned',
+    name: 'Custom Voice Clone',
+    provider: 'Coqui TTS',
+    gender: 'Custom',
+    accent: 'Custom',
+    language: 'en',
+    category: 'Voice Cloning',
+    supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh', 'ja', 'hu', 'ko', 'hi'],
+    tags: ['voice-cloning', 'custom', 'free', 'local'],
+    previewUrl: 'https://example.com/cloned-preview.mp3',
+    apiVoiceKey: 'cloned',
+    source: 'cloned',
+  },
+  {
+    // Non-local provider voice with no static sample — genuinely not previewable.
+    id: 'external-custom',
+    name: 'Remote Custom Voice',
+    provider: 'Custom',
     gender: 'Male',
-    accent: 'Indian English',
-    language: 'hi',
-    category: 'Conversational',
-    supportedLanguages: ['hi', 'en'],
-    tags: ['conversational'],
-    previewUrl: 'https://example.com/bunty-preview.mp3',
-    apiVoiceKey: 'bunty',
-    source: 'library',
-  },
-  {
-    id: 'el-jessica',
-    name: 'Jessica',
-    provider: 'ElevenLabs',
-    gender: 'Female',
     accent: 'American',
     language: 'en',
-    category: 'Corporate',
+    category: 'Narration',
     supportedLanguages: ['en'],
-    tags: ['corporate'],
+    tags: ['custom'],
     previewUrl: null,
-    apiVoiceKey: 'jessica',
-    source: 'library',
+    source: 'cloned',
   },
 ];
 
@@ -85,53 +85,53 @@ describe('VoiceSelector', () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(
-      <VoiceSelector voices={voices} selectedId="el-george" onSelect={onSelect} />
+      <VoiceSelector voices={voices} selectedId="coqui-default" onSelect={onSelect} />
     );
 
     await user.click(screen.getByRole('button', { name: /Project Voice/i }));
     const search = screen.getByRole('searchbox', { name: /Search voices/i });
 
     await user.clear(search);
-    await user.type(search, 'conversational');
-    expect(screen.getByRole('option', { name: /Bunty/i })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /Jessica/i })).not.toBeInTheDocument();
+    await user.type(search, 'voice cloning');
+    expect(screen.getByRole('option', { name: /Custom Voice Clone/i })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Default/i })).not.toBeInTheDocument();
 
     await user.clear(search);
-    await user.type(search, 'british');
-    expect(screen.getByRole('option', { name: /George/i })).toBeInTheDocument();
+    await user.type(search, 'multilingual');
+    expect(screen.getByRole('option', { name: /Default/i })).toBeInTheDocument();
   });
 
   it('selects a voice, highlights, closes, and preserves api key mapping', async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(
-      <VoiceSelector voices={voices} selectedId="el-george" onSelect={onSelect} />
+      <VoiceSelector voices={voices} selectedId="coqui-default" onSelect={onSelect} />
     );
 
     await user.click(screen.getByRole('button', { name: /Project Voice/i }));
-    await user.click(screen.getByRole('option', { name: /Jessica/i }));
+    await user.click(screen.getByRole('option', { name: /Custom Voice Clone/i }));
 
     expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'el-jessica', apiVoiceKey: 'jessica' })
+      expect.objectContaining({ id: 'coqui-cloned', apiVoiceKey: 'cloned' })
     );
-    expect(resolveApiVoiceKey('el-jessica')).toBe('jessica');
+    expect(resolveApiVoiceKey('coqui-cloned')).toBe('cloned');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 
   it('disables preview when unavailable and plays when available', async () => {
     const user = userEvent.setup();
     render(
-      <VoiceSelector voices={voices} selectedId="el-george" onSelect={vi.fn()} />
+      <VoiceSelector voices={voices} selectedId="coqui-default" onSelect={vi.fn()} />
     );
 
     await user.click(screen.getByRole('button', { name: /Project Voice/i }));
 
-    const george = screen.getByRole('option', { name: /George/i });
-    expect(within(george).getByText(/Preview unavailable/i)).toBeInTheDocument();
-    expect(within(george).getByRole('button', { name: /Preview unavailable/i })).toBeDisabled();
+    const defaultVoice = screen.getByRole('option', { name: /Default/i });
+    expect(within(defaultVoice).getByText(/Preview unavailable/i)).toBeInTheDocument();
+    expect(within(defaultVoice).getByRole('button', { name: /Preview unavailable/i })).toBeDisabled();
 
-    const bunty = screen.getByRole('option', { name: /Bunty/i });
-    const previewBtn = within(bunty).getByRole('button', { name: /Preview Bunty/i });
+    const cloned = screen.getByRole('option', { name: /Custom Voice Clone/i });
+    const previewBtn = within(cloned).getByRole('button', { name: /Preview Custom Voice Clone/i });
     expect(previewBtn).toBeEnabled();
     await user.click(previewBtn);
     expect(playMock).toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe('VoiceSelector', () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(
-      <VoiceSelector voices={voices} selectedId="el-george" onSelect={onSelect} />
+      <VoiceSelector voices={voices} selectedId="coqui-default" onSelect={onSelect} />
     );
 
     await user.click(screen.getByRole('button', { name: /Project Voice/i }));

@@ -5,23 +5,23 @@ import { libraryVoiceToSettings } from '../components/voices/VoiceLibrary';
 import type { LibraryVoice, TTSVoiceEngine, VoiceSettings } from '../types';
 
 const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
-  gender: 'Male',
+  gender: 'Neutral',
   speed: 1.0,
   pitch: 1.0,
   emotion: 'Professional',
   energy: 1.0,
   pauseControl: 0.25,
-  voiceName: 'George',
+  voiceName: 'Default (XTTS v2 Built-in)',
 };
 
 /** How many recently-used voice ids to remember in the studio. */
 const RECENT_VOICES_LIMIT = 8;
 
 export function useVoice() {
-  const [activeEngine, setActiveEngine] = useState<TTSVoiceEngine>('ElevenLabs');
+  const [activeEngine, setActiveEngine] = useState<TTSVoiceEngine>('Coqui TTS');
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS);
   const [favoriteVoiceIds, setFavoriteVoiceIds] = useState<string[]>([]);
-  const [defaultVoiceId, setDefaultVoiceId] = useState<string | null>('el-george');
+  const [defaultVoiceId, setDefaultVoiceId] = useState<string | null>('coqui-default');
   const [recentlyUsedVoiceIds, setRecentlyUsedVoiceIds] = useState<string[]>([]);
 
   // Load saved voice library preferences (favorites + default voice)
@@ -93,7 +93,7 @@ export function useVoice() {
   const handleSetDefaultVoice = (voice: LibraryVoice) => {
     setDefaultVoiceId(voice.id);
     setVoiceSettings((prev) => libraryVoiceToSettings(voice, prev));
-    setActiveEngine('ElevenLabs');
+    setActiveEngine('Coqui TTS');
     // Persist with the NEW default so a reload right after selecting keeps it.
     setRecentlyUsedVoiceIds((prev) => {
       const next = [voice.id, ...prev.filter((id) => id !== voice.id)].slice(

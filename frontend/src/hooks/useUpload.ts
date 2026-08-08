@@ -4,12 +4,12 @@ import { saveUserProject } from '../lib/firebase';
 import {
   translateVideo,
   getJobEventsUrl,
-  API_BASE,
   getProjectVideoUrl,
   getProjectDownloadUrl,
-  authHeaders,
+  detectVideoLanguage,
 } from '../services/api';
 import { voiceLibraryCatalog, resolveApiVoiceKey } from '../constants/voices';
+import { targetLanguages } from '../constants/data';
 import { libraryVoiceToSettings } from '../components/voices/VoiceLibrary';
 import type { Project, VoiceSettings } from '../types';
 
@@ -113,24 +113,28 @@ export function useUpload({
     };
   }, []);
 
-  // Spoken language detector
-  const runLanguageDetection = async (fileName: string) => {
+  // Spoken language detector — real audio content analysis.
+  // Pass the actual local File (uploaded to the backend, ffmpeg-extracted, Whisper-detected).
+  // Pass null for remote/demo videos that have no local file — detection is skipped
+  // (the backend pipeline still detects the true source language via Whisper during processing).
+  const runLanguageDetection = async (file: File | null) => {
+    if (!file) {
+      // No local file to analyze — never fabricate a language from the filename.
+      setDetectingLanguage(false);
+      setDetectedLanguage(null);
+      setDetectionConfidence(null);
+      return;
+    }
+
     setDetectingLanguage(true);
     setDetectedLanguage(null);
     setDetectionConfidence(null);
 
     try {
-      const response = await fetch(`${API_BASE}/api/detect-language`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ filename: fileName })
-      });
-      if (!response.ok) {
-        throw new Error(`Language detection failed (HTTP ${response.status})`);
-      }
-      const data = await response.json();
-      setDetectedLanguage(data.detected);
-      setDetectionConfidence(data.confidence);
+      const result = await detectVideoLanguage(file);
+      const langEntry = targetLanguages.find((l) => l.code === result.language);
+      setDetectedLanguage(langEntry ? langEntry.name : result.language);
+      setDetectionConfidence(result.confidence);
     } catch (err) {
       console.error('Spoken language detection error:', err);
       // Detection is best-effort; leave language unknown rather than fabricate a result.
@@ -200,7 +204,7 @@ export function useUpload({
           url: objectUrl
         });
 
-        runLanguageDetection(file.name);
+        runLanguageDetection(file);
       } catch (err) {
         console.error('Error analyzing video stream metadata:', err);
       }
@@ -235,7 +239,8 @@ export function useUpload({
         thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=640&q=80',
         url
       });
-      runLanguageDetection(name);
+      // Remote demo video has no local file — skip real detection (no fabrication).
+      runLanguageDetection(null);
     }, 400);
   };
 
@@ -267,7 +272,8 @@ export function useUpload({
         thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=640&q=80',
         url
       });
-      runLanguageDetection(filename);
+      // Remote URL video has no local file — skip real detection (no fabrication).
+      runLanguageDetection(null);
     }, 2500);
 
     video.onloadedmetadata = () => {
@@ -286,7 +292,8 @@ export function useUpload({
         thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=640&q=80',
         url
       });
-      runLanguageDetection(filename);
+      // Remote URL video has no local file — skip real detection (no fabrication).
+      runLanguageDetection(null);
     };
 
     video.onerror = () => {
@@ -301,7 +308,8 @@ export function useUpload({
         thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=640&q=80',
         url
       });
-      runLanguageDetection(filename);
+      // Remote URL video has no local file — skip real detection (no fabrication).
+      runLanguageDetection(null);
     };
   };
 

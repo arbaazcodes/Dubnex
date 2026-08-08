@@ -7,7 +7,7 @@ import os
 import subprocess
 import traceback
 
-from services.elevenlabs_service import generate_speech
+from services.tts_service import generate_speech
 from services.pipeline_service import process_video
 
 
@@ -16,11 +16,11 @@ def main() -> int:
     os.makedirs("/app/outputs", exist_ok=True)
 
     print("=== STAGE: seed speech for source video ===")
-    speech = generate_speech(
+    speech = asyncio.run(generate_speech(
         text="Hello everyone. Welcome to the dubbing pipeline verification test.",
         filename="e2e_seed_speech.mp3",
-        voice="george",
-    )
+        language="en",
+    ))
     print("seed_speech", speech, "size", os.path.getsize(speech))
 
     video_path = "/app/temp/e2e_source.mp4"
@@ -59,7 +59,7 @@ def main() -> int:
         return await process_video(
             video_path=video_path,
             target_language="es",
-            voice="george",
+            voice="default",
             on_progress=on_progress,
         )
 

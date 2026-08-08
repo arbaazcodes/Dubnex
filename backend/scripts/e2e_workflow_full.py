@@ -124,18 +124,19 @@ def main():
     if code != 200:
         fail("2b_Firebase_auth_token", projects)
 
-    # Build sample video with speech via ElevenLabs + ffmpeg inside local backend venv path
+    # Build sample video with speech via Coqui TTS + ffmpeg inside local backend venv path
     stage("3_Upload_prepare_sample")
     sys.path.insert(0, str(ROOT))
     os.chdir(ROOT)
     # Ensure env for generate_speech
-    from services.elevenlabs_service import generate_speech
+    import asyncio
+    from services.tts_service import generate_speech
 
-    speech = generate_speech(
+    speech = asyncio.run(generate_speech(
         text="Hello everyone. This is the Dubnex end to end workflow verification.",
         filename="e2e_workflow_speech.mp3",
-        voice="george",
-    )
+        language="en",
+    ))
     print("speech", speech, os.path.getsize(speech))
     video_path = TEMP / "e2e_workflow_source.mp4"
     cmd = [
@@ -158,7 +159,7 @@ def main():
     parts.append(f"\r\n--{boundary}--\r\n".encode())
     body = b"".join(parts)
     req = urllib.request.Request(
-        API + "/process-video?target_lang=es&voice=george",
+        API + "/process-video?target_lang=es&voice=default",
         data=body,
         method="POST",
         headers={

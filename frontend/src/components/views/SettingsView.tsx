@@ -187,7 +187,7 @@ export default function SettingsView({
                     </div>
                     <div className="flex justify-between">
                       <span className="text-zinc-400 uppercase flex items-center gap-1.5"><Mic2 className="w-3 h-3" /> Voice Synthesis</span>
-                      <strong className="text-emerald-500">ElevenLabs</strong>
+                      <strong className="text-emerald-500">Coqui TTS XTTS v2 (Local)</strong>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-zinc-400 uppercase">Video Processing</span>
@@ -201,9 +201,9 @@ export default function SettingsView({
                     </div>
                   </div>
                   <p className="text-[10px] text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                    API keys for Gemini and ElevenLabs are stored on the backend only and are never
-                    sent to the browser. Voice preferences adjust project metadata; actual voice
-                    synthesis is controlled by the selected voice.
+                    API keys for Gemini are stored on the backend only and are never
+                    sent to the browser. Voice synthesis runs locally using Coqui TTS (no API key required).
+                    Voice preferences adjust project metadata; actual voice synthesis is controlled by the selected voice.
                   </p>
                 </section>
               </div>

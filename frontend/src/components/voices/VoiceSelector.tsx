@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import type { LibraryVoice } from '../../types';
-import { languageDisplayName } from '../../constants/voices';
+import { languageDisplayName, voiceCanPreview } from '../../constants/voices';
 import { useVoicePreview } from './useVoicePreview';
 
 export type VoiceSelectorProps = {
@@ -154,7 +154,7 @@ export default function VoiceSelector({
   }, [activeIndex, open]);
 
   const previewLabel = (voice: LibraryVoice) => {
-    if (!voice.previewUrl) return 'Preview unavailable';
+    if (!voiceCanPreview(voice)) return 'Preview unavailable';
     if (isLoading(voice.id)) return 'Loading preview';
     if (isPlaying(voice.id)) return 'Pause preview';
     if (isPaused(voice.id)) return 'Resume preview';
@@ -264,7 +264,7 @@ export default function VoiceSelector({
               filtered.map((voice, index) => {
                 const isSelected = voice.id === selectedId;
                 const isActive = index === activeIndex;
-                const canPreview = Boolean(voice.previewUrl);
+                const canPreview = voiceCanPreview(voice);
                 const loading = isLoading(voice.id);
                 const playing = isPlaying(voice.id);
 

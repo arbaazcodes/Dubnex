@@ -40,14 +40,7 @@ os.environ.update(
         "PERF_PROFILE": "false",
         "TTS_CONCURRENCY": "2",
         "TTS_CONCURRENCY_MIN": "1",
-        "TTS_429_MAX_RETRIES": "5",
-        "TTS_BACKOFF_BASE_SECONDS": "0.01",
-        "TTS_BACKOFF_MAX_SECONDS": "0.05",
-        "TTS_BACKOFF_JITTER_RATIO": "0",
         "TTS_REQUEST_TIMEOUT_SECONDS": "30",
-        "TTS_ADAPTIVE_ENABLED": "true",
-        "TTS_DOWNGRADE_THRESHOLD": "2",
-        "TTS_RECOVERY_SUCCESS_STREAK": "5",
         "TRANSLATION_BATCH_SIZE": "4",
         "JOB_MAX_RETRIES": "2",
         # Keep unit/integration tests on NLLB path by default; Gemini has dedicated tests.
@@ -66,6 +59,13 @@ os.environ.update(
         "OPENAI_MAX_RETRIES": "0",
         "OPENAI_MAX_OUTPUT_TOKENS": "2048",
         "AI_PROVIDER": "auto",
+        # Coqui TTS (XTTS v2) - Local/Free TTS
+        "TTS_PROVIDER": "coqui",
+        "TTS_MODEL": "tts_models/multilingual/multi-dataset/xtts_v2",
+        "TTS_DEVICE": "cpu",
+        "TTS_LANGUAGE": "en",
+        "TTS_SPEAKER_WAV": "",
+        "TTS_SPEED": "1.0",
     }
 )
 
@@ -96,36 +96,35 @@ def _install_ai_stubs():
     sys.modules["services.whisper_service"] = whisper
 
     # Keep real translator for unit tests that import it; API tests may still load it.
-    # Stub elevenlabs client usage
-    el = types.ModuleType("services.elevenlabs_service")
+    # Stub elevenlabs client usage - replace with Coqui TTS stub
+    tts = types.ModuleType("services.tts_service")
 
-    class _Kind(str):
-        pass
+    async def _fake_generate_speech(text, language="en", filename="speech.mp3", voice="default"):
+        return str(_OUT / filename)
 
-    class _TtsErrorKind:
-        RATE_LIMIT = _Kind("rate_limit")
-        RETRYABLE = _Kind("retryable")
-        FATAL = _Kind("fatal")
+    async def _fake_generate_segment_speech(segments, language="en", voice="default", work_dir=None, job_id=None, on_progress=None):
+        results = []
+        for i, segment in enumerate(segments):
+            sid = int(segment["id"])
+            filepath = str(_OUT / f"segment_{sid:03d}.mp3")
+            Path(filepath).write_bytes(b"ID3")
+            results.append({
+                "id": sid,
+                "start": segment["start"],
+                "end": segment["end"],
+                "duration": segment["duration"],
+                "text": segment["translated"],
+                "audio": filepath,
+            })
+        return results
 
-    class _TtsRequestError(Exception):
-        def __init__(self, message, *, kind, retry_after=None, cause=None):
-            super().__init__(message)
-            self.kind = kind
-            self.retry_after = retry_after
+    def _fake_tts_job_dir(job_id):
+        return str(_TEMP / "tts_jobs" / job_id)
 
-    el.get_all_voices = MagicMock(return_value=[])
-    el.generate_speech = MagicMock(side_effect=lambda text, filename="x.mp3", voice="george": str(_OUT / filename))
-    el.synthesize_to_file = MagicMock(
-        side_effect=lambda text, filepath, voice="george", timeout=None: (
-            Path(filepath).write_bytes(b"ID3"),
-            str(filepath),
-        )[1]
-    )
-    el.client = None
-    el.TtsErrorKind = _TtsErrorKind
-    el.TtsRequestError = _TtsRequestError
-    el.classify_tts_error = MagicMock(return_value=_TtsErrorKind.FATAL)
-    sys.modules["services.elevenlabs_service"] = el
+    tts.generate_speech = _fake_generate_speech
+    tts.generate_segment_speech = _fake_generate_segment_speech
+    tts.tts_job_dir = _fake_tts_job_dir
+    sys.modules["services.tts_service"] = tts
 
 
 _install_ai_stubs()

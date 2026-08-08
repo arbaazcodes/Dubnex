@@ -12,7 +12,6 @@ from services.translator_service import translate_text
 from services.video_renderer_service import replace_audio
 from services.whisper_service import detect_language, transcribe_audio
 from services.ffmpeg_service import extract_audio
-from services.elevenlabs_service import get_all_voices, generate_speech
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import json
@@ -27,7 +26,6 @@ from config import (
     MAX_CHAT_INSTRUCTION_LENGTH,
     MAX_TRANSCRIBE_PAYLOAD_BYTES,
     MAX_RENDER_UPLOAD_BYTES,
-    MAX_DETECT_FILENAME_LENGTH,
 )
 from services.secure_media_service import resolve_project_media
 from services.firebase_auth import require_authenticated_user, verify_firebase_id_token
@@ -175,38 +173,6 @@ def new_job(request: Request):
         "status": "created"
     }
 
-@app.post("/api/detect-language")
-async def detect_language_audio(request: Request, payload: dict = Body(...)):
-    user = require_authenticated_user(request)
-    enforce_rate_limit(request, user)
-    filename = _clean_text((payload or {}).get("filename", ""), MAX_DETECT_FILENAME_LENGTH)
-    sample_text = _clean_text((payload or {}).get("sampleText", ""), MAX_TEXT_LENGTH)
-
-    lowered_name = filename.lower()
-    lowered_text = sample_text.lower()
-
-    if "french" in lowered_name or "paris" in lowered_name or "bonjour" in lowered_text or "oui" in lowered_text:
-        detected = "French"
-        confidence = 0.97
-    elif "hindi" in lowered_name or "india" in lowered_name or "namaste" in lowered_text or "namaskar" in lowered_text:
-        detected = "Hindi"
-        confidence = 0.98
-    elif "arabic" in lowered_name or "dubai" in lowered_name or "marhaban" in lowered_text or "salam" in lowered_text:
-        detected = "Arabic"
-        confidence = 0.95
-    elif "spanish" in lowered_name or "madrid" in lowered_name or "hola" in lowered_text or "gracias" in lowered_text:
-        detected = "Spanish"
-        confidence = 0.96
-    elif "german" in lowered_name or "berlin" in lowered_name or "hallo" in lowered_text:
-        detected = "German"
-        confidence = 0.92
-    else:
-        detected = "English"
-        confidence = 0.94
-
-    return {"detected": detected, "confidence": confidence}
-
-
 @app.post("/detect-language")
 async def detect_language_audio_upload(request: Request, file: UploadFile = File(...)):
     user = require_authenticated_user(request)
@@ -259,7 +225,67 @@ async def transcribe_audio_api(request: Request, payload: dict = Body(...)):
             content={"error": "Audio payload is too large or invalid."},
         )
 
-    return {"text": "This is a FastAPI-backed transcription placeholder. Upload a real audio pipeline implementation to replace this stub."}
+    return await transcribe_audio_payload(audio)
+
+
+async def transcribe_audio_payload(audio_b64: str) -> dict:
+    """Decode base64 audio (webm/ogg/wav from the mic recorder) and transcribe
+    with Whisper. Real implementation — never a canned response."""
+    import base64
+    import tempfile
+
+    try:
+        raw = base64.b64decode(audio_b64, validate=True)
+    except Exception:
+        return JSONResponse(
+            status_code=400, content={"error": "Audio payload is not valid base64."}
+        )
+    if not raw:
+        return JSONResponse(
+            status_code=400, content={"error": "Audio payload is empty."}
+        )
+
+    suffix = ".webm"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(raw)
+        audio_path = tmp.name
+
+    try:
+        result = await asyncio.to_thread(transcribe_audio, audio_path)
+        segments = [
+            {
+                "id": seg["id"],
+                "start": seg["start"],
+                "end": seg["end"],
+                "text": seg["text"],
+            }
+            for seg in result.get("segments") or []
+        ]
+        return {
+            "text": (result.get("full_text") or "").strip(),
+            "language": result.get("language"),
+            "confidence": result.get("confidence"),
+            "segments": segments,
+        }
+    except Exception as exc:
+        get_logger("screen_ai.transcribe").error(
+            "mic transcription failed",
+            extra={
+                "event": "transcribe_audio_failed",
+                "error_type": type(exc).__name__,
+            },
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Transcription failed. The backend could not transcribe this recording."
+            },
+        )
+    finally:
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
 
 
 @app.post("/transcribe-video")
@@ -316,12 +342,12 @@ def job_status(job_id: str, request: Request):
     return job
 
 @app.post("/generate-audio")
-async def generate_audio(request: Request, text: str):
+async def generate_audio(request: Request, text: str, language: str = "en", voice: str = "default"):
     user = require_authenticated_user(request)
     enforce_rate_limit(request, user)
     if not isinstance(text, str) or len(text) > MAX_TEXT_LENGTH:
         return JSONResponse(status_code=400, content={"error": "text is too long."})
-    filepath = await generate_speech(text)
+    filepath = await generate_speech(text, language=language, voice=voice)
     return FileResponse(
         filepath,
         media_type="audio/mpeg",
@@ -1332,24 +1358,44 @@ async def job_events(job_id: str, request: Request):
 def voices(request: Request):
     user = require_authenticated_user(request)
     enforce_rate_limit(request, user)
+    from services.voice_catalog import get_voice_catalog
     return {
-        "voices": get_all_voices()
+        "voices": get_voice_catalog()
     }
 
-@app.get("/eleven-test")
-def eleven_test(request: Request):
+
+@app.get("/tts-test")
+async def tts_test(
+    request: Request,
+    voice: str = "default",
+    language: str = "en",
+    text: str = "Hello! This is Coqui TTS XTTS v2 speaking locally.",
+):
+    """Real TTS preview: synthesize a short sample with the local Coqui engine.
+
+    Used by the Voice Studio preview buttons. Returns an MP3 (GET so the
+    browser <audio> element can stream it directly, with ?token= auth).
+    """
     user = require_authenticated_user(request)
     enforce_rate_limit(request, user)
 
-    filepath = generate_speech(
-        text="Hello Arbaaz. This is ElevenLabs speaking.",
-        filename="eleven_test.mp3"
-    )
+    from services.tts_service import generate_speech
 
+    if not isinstance(text, str) or len(text) > MAX_TEXT_LENGTH:
+        return JSONResponse(status_code=400, content={"error": "text is too long."})
+
+    # Unique filename per request so concurrent previews never clobber each other.
+    filename = f"tts_preview_{os.urandom(6).hex()}.mp3"
+    filepath = await generate_speech(
+        text=text,
+        filename=filename,
+        language=language,
+        voice=voice,
+    )
     return FileResponse(
         path=filepath,
         media_type="audio/mpeg",
-        filename="eleven_test.mp3"
+        filename="tts_preview.mp3",
     )
 
 @app.get("/api/pipeline-sse")

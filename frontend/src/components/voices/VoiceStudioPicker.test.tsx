@@ -8,7 +8,7 @@ const voices: LibraryVoice[] = [
   {
     id: 'v1',
     name: 'Aria',
-    provider: 'ElevenLabs',
+    provider: 'Coqui TTS',
     gender: 'Female',
     accent: 'American',
     language: 'en',
@@ -16,12 +16,12 @@ const voices: LibraryVoice[] = [
     supportedLanguages: ['en', 'es'],
     tags: ['clear'],
     previewUrl: 'https://example.com/aria.mp3',
-    source: 'library',
+    source: 'local',
   },
   {
     id: 'v2',
     name: 'Bunty',
-    provider: 'ElevenLabs',
+    provider: 'Coqui TTS',
     gender: 'Male',
     accent: 'Indian English',
     language: 'hi',
@@ -29,7 +29,7 @@ const voices: LibraryVoice[] = [
     supportedLanguages: ['hi', 'en'],
     tags: ['friendly'],
     previewUrl: null,
-    source: 'library',
+    source: 'local',
   },
 ];
 

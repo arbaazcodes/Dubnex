@@ -1,5 +1,5 @@
 """
-Phase-1 verification: simulated 429 + segment resume (no live ElevenLabs).
+Phase-1 verification: simulated TTS error + segment resume (local Coqui TTS).
 
 Run: backend/.venv/Scripts/python.exe backend/scripts/verify_tts_429_resume.py
 """
@@ -15,9 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from services.elevenlabs_limiter import reset_limiter_for_tests  # noqa: E402
-from services.elevenlabs_service import TtsErrorKind, TtsRequestError  # noqa: E402
 import services.tts_service as tts  # noqa: E402
+from services.tts_provider import TTSError, TTSErrorKind  # noqa: E402
 
 
 def _seg(i: int) -> dict:
@@ -31,39 +30,40 @@ def _seg(i: int) -> dict:
 
 
 async def main() -> int:
-    reset_limiter_for_tests(
-        max_concurrency=2,
-        min_concurrency=1,
-        adaptive=True,
-        downgrade_threshold=2,
-        recovery_streak=3,
-    )
-    tts.TTS_429_MAX_RETRIES = 1
+    # Override TTS config for fast testing
+    tts.TTS_CONCURRENCY = 2
+    tts.TTS_CONCURRENCY_MIN = 1
+    # Reset global provider so it picks up new config
+    import services.tts_service as tts_module
+    tts_module._provider = None
 
     with tempfile.TemporaryDirectory(prefix="tts_verify_") as raw:
         job_dir = Path(raw)
         fail_counts = {"1": 0}
 
-        def phase1(text, filepath, voice="george", timeout=None):
-            sid = int(Path(filepath).stem.split("_")[1])
+        original_synthesize = tts_module._get_provider().synthesize
+
+        def phase1_synthesize(text, output_path, language=None, speaker_wav=None, speed=None):
+            sid = int(Path(output_path).stem.split("_")[1])
             if sid == 1:
                 fail_counts["1"] += 1
-                raise TtsRequestError(
-                    "concurrent_limit_exceeded",
-                    kind=TtsErrorKind.RATE_LIMIT,
-                    retry_after=0.01,
+                raise TTSError(
+                    "Simulated GPU OOM error",
+                    kind=TTSErrorKind.RETRYABLE,
                 )
-            Path(filepath).write_bytes(b"ID3-ok")
-            return str(filepath)
+            # Write a dummy MP3 file
+            Path(output_path).write_bytes(b"ID3-ok")
+            return str(output_path)
 
-        tts.synthesize_to_file = phase1  # type: ignore
-        tts.compute_backoff_seconds = lambda *a, **k: 0.001  # type: ignore
+        # Replace the provider's synthesize method
+        provider = tts_module._get_provider()
+        provider.synthesize = phase1_synthesize  # type: ignore
 
         try:
             await tts.generate_segment_speech(
                 [_seg(0), _seg(1), _seg(2)],
                 work_dir=str(job_dir),
-                job_id="verify-429",
+                job_id="verify-retry",
             )
             print("FAIL: expected RuntimeError on first pass")
             return 1
@@ -80,17 +80,17 @@ async def main() -> int:
 
         calls: list[int] = []
 
-        def phase2(text, filepath, voice="george", timeout=None):
-            sid = int(Path(filepath).stem.split("_")[1])
+        def phase2_synthesize(text, output_path, language=None, speaker_wav=None, speed=None):
+            sid = int(Path(output_path).stem.split("_")[1])
             calls.append(sid)
-            Path(filepath).write_bytes(b"ID3-resume")
-            return str(filepath)
+            Path(output_path).write_bytes(b"ID3-resume")
+            return str(output_path)
 
-        tts.synthesize_to_file = phase2  # type: ignore
+        provider.synthesize = phase2_synthesize  # type: ignore
         results = await tts.generate_segment_speech(
             [_seg(0), _seg(1), _seg(2)],
             work_dir=str(job_dir),
-            job_id="verify-429",
+            job_id="verify-retry",
         )
         if calls != [1]:
             print("FAIL: expected only segment 1 to re-synthesize, got", calls)
@@ -99,7 +99,7 @@ async def main() -> int:
             print("FAIL: expected 3 results")
             return 1
         print("PASS: resume synthesized only missing segment 1")
-        print("PASS: simulated 429 resume verification OK")
+        print("PASS: simulated retry resume verification OK")
         return 0
 
 

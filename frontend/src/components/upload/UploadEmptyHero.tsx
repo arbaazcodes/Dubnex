@@ -28,7 +28,7 @@ export function UploadEmptyHero() {
           </h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-md">
             Drop a video, pick a language and voice, then let Whisper, Gemini, and
-            ElevenLabs handle the rest.
+            Coqui TTS handle the rest — fully local, no API key required.
           </p>
         </div>
 

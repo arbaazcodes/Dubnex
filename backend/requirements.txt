@@ -8,7 +8,7 @@ ffmpeg-python
 faster-whisper
 transformers
 torch
-elevenlabs
+TTS
 boto3
 sqlalchemy
 psycopg[binary]

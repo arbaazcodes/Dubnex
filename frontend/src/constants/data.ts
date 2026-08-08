@@ -55,10 +55,10 @@ export const voicePresets: { id: string; name: string; settings: VoiceSettings; 
     settings: { gender: 'Neutral', speed: 1.1, pitch: 1.0, emotion: 'Neutral', energy: 1.0, pauseControl: 0.15, voiceName: 'Marcus' }
   },
   {
-    id: 'e-labs-bella',
-    name: 'Bella (Female - Premium Direct)',
-    engine: 'ElevenLabs',
-    settings: { gender: 'Female', speed: 1.0, pitch: 1.0, emotion: 'Exciting', energy: 1.3, pauseControl: 0.2, voiceName: 'Bella' }
+    id: 'c-default',
+    name: 'Default (XTTS v2 Built-in)',
+    engine: 'Coqui TTS',
+    settings: { gender: 'Neutral', speed: 1.0, pitch: 1.0, emotion: 'Professional', energy: 1.0, pauseControl: 0.25, voiceName: 'Default (XTTS v2 Built-in)' }
   }
 ];
 

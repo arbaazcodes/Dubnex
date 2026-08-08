@@ -1,171 +1,65 @@
 import { LibraryVoice } from '../types';
 
 /**
- * Static Voice Library catalog for SCREEN.AI / Dubnex.
- * apiVoiceKey is sent to FastAPI /process-video and resolved via VOICE_MAP for ElevenLabs.
+ * Static Voice Library catalog for Dubnex (Coqui TTS XTTS v2).
+ * apiVoiceKey is sent to FastAPI /process-video and resolved via local TTS provider.
  * previewUrl null => Preview control disabled ("Preview unavailable").
  */
 export const voiceLibraryCatalog: LibraryVoice[] = [
   {
-    id: 'el-george',
-    name: 'George',
-    provider: 'ElevenLabs',
-    gender: 'Male',
-    accent: 'British',
-    language: 'en',
-    category: 'Narration',
-    supportedLanguages: ['en', 'es', 'fr', 'de', 'hi', 'pt', 'it', 'ja'],
-    tags: ['narrative', 'warm', 'documentary', 'default'],
-    previewUrl: null,
-    apiVoiceKey: 'george',
-    description: 'Warm narrative male voice suited for explainers and documentaries.',
-    source: 'library',
-  },
-  {
-    id: 'el-jessica',
-    name: 'Jessica',
-    provider: 'ElevenLabs',
-    gender: 'Female',
-    accent: 'American',
-    language: 'en',
-    category: 'Corporate',
-    supportedLanguages: ['en', 'es', 'fr', 'de', 'pt', 'it', 'nl'],
-    tags: ['clear', 'professional', 'corporate', 'bright'],
-    previewUrl: null,
-    apiVoiceKey: 'jessica',
-    description: 'Clear professional female voice for corporate and product narration.',
-    source: 'library',
-  },
-  {
-    id: 'el-bunty',
-    name: 'Bunty',
-    provider: 'ElevenLabs',
-    gender: 'Male',
-    accent: 'Indian English',
-    language: 'en',
-    category: 'Conversational',
-    supportedLanguages: ['en', 'hi', 'ur', 'ta', 'te', 'gu', 'pa'],
-    tags: ['conversational', 'south-asian', 'friendly'],
-    previewUrl: null,
-    apiVoiceKey: 'bunty',
-    description: 'Friendly conversational male voice with South Asian English character.',
-    source: 'library',
-  },
-  {
-    id: 'el-bella',
-    name: 'Bella',
-    provider: 'ElevenLabs',
-    gender: 'Female',
-    accent: 'American',
-    language: 'en',
-    category: 'Cinematic',
-    supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'pl'],
-    tags: ['expressive', 'cinematic', 'emotional'],
-    previewUrl: null,
-    apiVoiceKey: 'bella',
-    description: 'Expressive cinematic female voice for trailers and emotional scenes.',
-    source: 'library',
-  },
-  {
-    id: 'el-adam',
-    name: 'Adam',
-    provider: 'ElevenLabs',
-    gender: 'Male',
-    accent: 'American',
-    language: 'en',
-    category: 'Broadcast',
-    supportedLanguages: ['en', 'es', 'fr', 'de', 'ja', 'ko', 'zh'],
-    tags: ['deep', 'authoritative', 'news'],
-    previewUrl: null,
-    apiVoiceKey: 'adam',
-    description: 'Deep authoritative male voice for news and technical briefs.',
-    source: 'library',
-  },
-  {
-    id: 'el-rachel',
-    name: 'Rachel',
-    provider: 'ElevenLabs',
-    gender: 'Female',
-    accent: 'American',
-    language: 'en',
-    category: 'Narration',
-    supportedLanguages: ['en', 'es', 'fr', 'de', 'pt', 'ar'],
-    tags: ['soft', 'storytelling', 'calm'],
-    previewUrl: null,
-    apiVoiceKey: 'rachel',
-    description: 'Soft storytelling female voice for calm narration and education.',
-    source: 'library',
-  },
-  {
-    id: 'el-serena',
-    name: 'Serena',
-    provider: 'ElevenLabs',
-    gender: 'Female',
-    accent: 'British',
-    language: 'en',
-    category: 'Broadcast',
-    supportedLanguages: ['en', 'fr', 'de', 'it', 'es'],
-    tags: ['crisp', 'premium', 'broadcast'],
-    previewUrl: null,
-    apiVoiceKey: 'serena',
-    description: 'Crisp broadcast-ready female voice with premium clarity.',
-    source: 'library',
-  },
-  {
-    id: 'el-marcus',
-    name: 'Marcus',
-    provider: 'ElevenLabs',
+    id: 'coqui-default',
+    name: 'Default (XTTS v2 Built-in)',
+    provider: 'Coqui TTS',
     gender: 'Neutral',
-    accent: 'Neutral',
+    accent: 'Multilingual',
     language: 'en',
-    category: 'Multilingual',
-    supportedLanguages: ['en', 'es', 'fr', 'de', 'hi', 'ja', 'zh', 'ko'],
-    tags: ['neutral', 'fast', 'multilingual'],
+    category: 'Default',
+    supportedLanguages: [
+      'en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr',
+      'ru', 'nl', 'cs', 'ar', 'zh', 'ja', 'hu', 'ko', 'hi'
+    ],
+    tags: ['multilingual', 'default', 'free', 'local'],
     previewUrl: null,
-    apiVoiceKey: 'marcus',
-    description: 'Neutral multilingual voice optimized for clear pacing across languages.',
-    source: 'library',
+    apiVoiceKey: 'default',
+    description: 'XTTS v2 built-in multilingual speaker. No voice cloning. Supports 17+ languages.',
+    source: 'local',
   },
   {
-    id: 'el-aria',
-    name: 'Aria',
-    provider: 'ElevenLabs',
-    gender: 'Female',
-    accent: 'Australian',
+    id: 'coqui-cloned',
+    name: 'Custom Voice Clone',
+    provider: 'Coqui TTS',
+    gender: 'Custom',
+    accent: 'Custom',
     language: 'en',
-    category: 'Social',
-    supportedLanguages: ['en', 'es', 'fr', 'pt'],
-    tags: ['youthful', 'energetic', 'social'],
+    category: 'Voice Cloning',
+    supportedLanguages: [
+      'en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr',
+      'ru', 'nl', 'cs', 'ar', 'zh', 'ja', 'hu', 'ko', 'hi'
+    ],
+    tags: ['voice-cloning', 'custom', 'free', 'local'],
     previewUrl: null,
-    apiVoiceKey: 'aria',
-    description: 'Youthful energetic female voice for social and lifestyle content.',
-    source: 'library',
-  },
-  {
-    id: 'el-daniel',
-    name: 'Daniel',
-    provider: 'ElevenLabs',
-    gender: 'Male',
-    accent: 'British',
-    language: 'en',
-    category: 'Audiobook',
-    supportedLanguages: ['en', 'fr', 'de', 'es', 'it'],
-    tags: ['formal', 'audiobook', 'steady'],
-    previewUrl: null,
-    apiVoiceKey: 'daniel',
-    description: 'Steady formal male voice suited for audiobooks and long-form dubs.',
-    source: 'library',
+    apiVoiceKey: 'cloned',
+    description: 'Upload a reference audio file (3-10 seconds) to clone any voice. Works across all 17+ supported languages.',
+    source: 'local',
   },
 ];
 
-export const VOICE_LIBRARY_STORAGE_KEY = 'screen_ai_voice_library_prefs';
+export const VOICE_LIBRARY_STORAGE_KEY = 'dubnex_voice_library_prefs';
 
 /** Resolve backend voice query key from Voice Library selection */
 export function resolveApiVoiceKey(defaultVoiceId: string | null | undefined): string {
   const voice = voiceLibraryCatalog.find((v) => v.id === defaultVoiceId);
   if (voice?.apiVoiceKey) return voice.apiVoiceKey;
   if (voice?.name) return voice.name.toLowerCase();
-  return 'george';
+  return 'default';
+}
+
+/**
+ * Whether a voice can be previewed. Local Coqui voices have no static sample
+ * URL but ARE previewable — the backend synthesizes a short sample on demand.
+ */
+export function voiceCanPreview(voice: LibraryVoice): boolean {
+  return Boolean(voice.previewUrl) || voice.provider === 'Coqui TTS';
 }
 
 export function languageDisplayName(code: string): string {
@@ -183,6 +77,10 @@ export function languageDisplayName(code: string): string {
     ar: 'Arabic',
     nl: 'Dutch',
     pl: 'Polish',
+    tr: 'Turkish',
+    ru: 'Russian',
+    cs: 'Czech',
+    hu: 'Hungarian',
     ur: 'Urdu',
     ta: 'Tamil',
     te: 'Telugu',

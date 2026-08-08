@@ -34,7 +34,11 @@ import {
 } from '../ui/select';
 import { useVoicePreview } from './useVoicePreview';
 import { useVoiceStudio, type VoiceGenderFilter } from './useVoiceStudio';
-import { voiceLibraryCatalog, languageDisplayName } from '../../constants/voices';
+import {
+  voiceLibraryCatalog,
+  languageDisplayName,
+  voiceCanPreview,
+} from '../../constants/voices';
 import type { LibraryVoice } from '../../types';
 
 export interface VoiceStudioProps {
@@ -47,7 +51,7 @@ export interface VoiceStudioProps {
   onSelectDefault: (voice: LibraryVoice) => void;
   /** Renders a back affordance (full-page usage, not the picker dialog). */
   onBackToStudio?: () => void;
-  /** Static catalog override. Defaults to the bundled ElevenLabs catalog. */
+  /** Static catalog override. Defaults to the bundled Coqui TTS catalog. */
   voices?: LibraryVoice[];
   /**
    * Optional async voice source. When provided the studio renders real
@@ -734,7 +738,7 @@ export default function VoiceStudio({
                           isPreviewing={isPreviewing}
                           isPreviewLoading={preview.isLoading(voice.id)}
                           isPreviewPaused={preview.isPaused(voice.id)}
-                          canPreview={Boolean(voice.previewUrl)}
+                          canPreview={voiceCanPreview(voice)}
                           cardRef={(el) => {
                             cardRefs.current[index] = el;
                           }}

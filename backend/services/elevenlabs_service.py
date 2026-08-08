@@ -69,6 +69,32 @@ def get_all_voices():
     ]
 
 
+_ACCOUNT_VOICES_CACHE: dict = {"ts": 0.0, "by_name": {}, "by_id": {}}
+_ACCOUNT_VOICES_TTL_SECONDS = 300  # refresh account voice index at most every 5 min
+
+
+def _account_voice_index() -> tuple[dict[str, str], dict[str, str]]:
+    """Cached name→id and id→name index of the account's real voices."""
+    if time.time() - _ACCOUNT_VOICES_CACHE["ts"] <= _ACCOUNT_VOICES_TTL_SECONDS:
+        return _ACCOUNT_VOICES_CACHE["by_name"], _ACCOUNT_VOICES_CACHE["by_id"]
+    try:
+        voices = get_all_voices()
+        by_name: dict[str, str] = {}
+        by_id: dict[str, str] = {}
+        for v in voices:
+            name_key = (v.get("name") or "").strip().lower()
+            if name_key:
+                by_name.setdefault(name_key, v["voice_id"])
+            by_id.setdefault(v["voice_id"], v.get("name") or name_key)
+        _ACCOUNT_VOICES_CACHE.update({"ts": time.time(), "by_name": by_name, "by_id": by_id})
+    except Exception as exc:  # pragma: no cover - network-dependent
+        logger.warning(
+            "account voice index refresh failed",
+            extra={"event": "account_voices_failed", "error_type": type(exc).__name__},
+        )
+    return _ACCOUNT_VOICES_CACHE["by_name"], _ACCOUNT_VOICES_CACHE["by_id"]
+
+
 def _resolve_voice_id(voice: str) -> str:
     voice_key = (voice or "george").strip().lower()
     voice_id = VOICE_MAP.get(voice_key)
@@ -76,8 +102,20 @@ def _resolve_voice_id(voice: str) -> str:
     # Allow raw ElevenLabs voice IDs to pass through
     if not voice_id and len(voice_key) >= 20 and voice_key.replace("_", "").isalnum():
         voice_id = voice
-    if not voice_id or str(voice_id).startswith("YOUR_"):
-        voice_id = DEFAULT_VOICE_ID
+
+    # Placeholder / missing ID in config → try the account's real voices by name.
+    if not voice_id or str(voice_id).startswith(("YOUR_", "PLACEHOLDER_")):
+        by_name, _ = _account_voice_index()
+        account_id = by_name.get(voice_key)
+        if account_id:
+            voice_id = account_id
+
+    if not voice_id or str(voice_id).startswith(("YOUR_", "PLACEHOLDER_")):
+        raise TtsRequestError(
+            f"Voice '{voice_key}' is not configured with a valid ElevenLabs voice ID. "
+            "Set ELEVENLABS_VOICE_{name} or use a voice that exists on the account.",
+            kind=TtsErrorKind.FATAL,
+        )
 
     logger.debug("Resolved voice key=%r -> voice_id=%r", voice_key, voice_id)
     return voice_id
